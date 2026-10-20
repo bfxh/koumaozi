@@ -211,13 +211,13 @@
     },
     {
       "id": "CMB-10",
-      "name": "甩举证加预设攻击",
+      "name": "预设加甩举证",
       "sequence": [
         [
-          "PAT-11"
+          "PAT-17"
         ],
         [
-          "PAT-17"
+          "PAT-11"
         ]
       ],
       "seal_degree": 4,

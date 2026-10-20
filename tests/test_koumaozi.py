@@ -50,6 +50,18 @@ class TestData(unittest.TestCase):
     def test_combo_count(self):
         self.assertEqual(len(common.load_combos()["combos"]), 10)
 
+    def test_combo_examples_are_detected(self):
+        """数据自洽：每条连招自己写的 example，必须能被自己的检测器识别出来。
+
+        这条比"生成器产出能被回扫"更可靠——生成器随机挑模板，用词未必落在
+        正则覆盖内；而 example 是写死的，它认不出自己就等于数据说谎。
+        """
+        patterns = hat_scan.compile_patterns()
+        for combo in common.load_combos()["combos"]:
+            findings, _ = hat_scan.scan_text("<example>", combo["example"], patterns)
+            ids = [f["pattern_id"] for f in findings]
+            self.assertIn(combo["id"], ids, f"{combo['id']} 的 example 自己认不出来: {ids}")
+
     def test_combo_break_at_in_sequence(self):
         for combo in common.load_combos()["combos"]:
             flat = []
