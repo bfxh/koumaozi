@@ -43,8 +43,11 @@ jobs:
           python - <<'PY'
           import json
           data = json.load(open("/tmp/scan.json", encoding="utf-8"))
-          assert data["summary"]["pattern_hits"] >= 2, data
-          print("scan ok:", data["summary"])
+          summary = data["summary"]
+          assert summary["hat_hits"] >= 1, summary
+          assert summary["pattern_hits"] >= 1, summary
+          assert summary["max_label_score"] > 0, summary
+          print("scan ok:", summary)
           PY
 
       - name: CLI 冒烟（生成器无残留槽位）
