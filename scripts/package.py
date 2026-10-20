@@ -15,6 +15,7 @@
     python3 scripts/package.py --verify         # 打包 + 自检
     python3 scripts/package.py --verify dist/koumaozi-1.3.0.zip   # 只验已有包
     python3 scripts/package.py --keep           # 自检后保留解压目录，便于排查
+    python3 scripts/package.py --check-dir      # 核对已装目录（默认当前目录）
 
 退出码: 0 通过；1 打包或自检失败。
 """
@@ -223,6 +224,27 @@ def smoke(dest):
     return problems
 
 
+def check_dir(path=None):
+    """核对一个**已安装目录**是否还是当初发出去的那份。
+
+    装完之后目录是会被改的：开发态软链、手改一行试试、被别的工具覆盖、
+    半路中断的 cp。这些都不会报错，只会在某天扫不出东西时才暴露。
+    清单就在安装目录里（MANIFEST.sha256），核对一遍很便宜，没必要靠猜。
+
+    源码态没有 MANIFEST——那不是失败，是"没什么可核对"。
+    """
+    path = os.path.abspath(path or common.REPO_ROOT)
+    manifest_path = os.path.join(path, MANIFEST_NAME)
+    if not os.path.isfile(manifest_path):
+        return {"path": path, "files": 0, "problems": [], "passed": True,
+                "skipped": f"没有 {MANIFEST_NAME}（源码态，未打包）"}
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        manifest = parse_manifest(fh.read())
+    problems = check_contents(path, manifest)
+    return {"path": path, "files": len(manifest), "problems": problems,
+            "passed": not problems, "skipped": None}
+
+
 def verify(zip_path, keep=False):
     if not os.path.isfile(zip_path):
         raise FileNotFoundError(f"找不到包: {zip_path}")
@@ -250,8 +272,24 @@ def main(argv=None):
     parser.add_argument("--verify", nargs="*", default=None,
                         help="打包后自检；也可给出一个或多个已有 zip 路径")
     parser.add_argument("--keep", action="store_true", help="保留解压目录便于排查")
+    parser.add_argument("--check-dir", nargs="?", const=".", default=None,
+                        help="核对已安装目录是否与自带 MANIFEST 一致（默认当前目录）")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.check_dir is not None:
+        result = check_dir(args.check_dir)
+        if args.json:
+            import json
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif result.get("skipped"):
+            print(f"核对 {result['path']}\n跳过：{result['skipped']}")
+        else:
+            print(f"核对 {result['path']}  {result['files']} 个文件")
+            for problem in result["problems"]:
+                print(f"  × {problem}")
+            print("通过" if result["passed"] else f"失败：{len(result['problems'])} 项")
+        return 0 if result["passed"] else 1
 
     if args.verify is None:
         built = build(args.out)

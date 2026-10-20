@@ -4,11 +4,15 @@
     python -m unittest discover -s tests -v
 """
 import json
+import locale
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+import zipfile
 from collections import Counter
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,6 +30,35 @@ import package  # noqa: E402
 import release_notes  # noqa: E402
 import verify_data  # noqa: E402
 import wordcount  # noqa: E402
+
+
+class ShellResult:
+    """子进程结果的替身：Windows 上命令行的中文是 GBK 出来的，得自己解码。"""
+
+    def __init__(self, returncode, stdout, stderr):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def decode_console(raw):
+    """按平台猜编码解码子进程输出。
+
+    PowerShell / cmd 在中文 Windows 上吐的是 ANSI 码页（cp936），不是 UTF-8；
+    而 CI 的 Linux 上是 UTF-8。装脚本本身**不改**全局控制台编码——那会让
+    在 cmd.exe 里直接跑的用户看到乱码，测试迁就它一次就好。
+    """
+    candidates = ["utf-8"]
+    preferred = locale.getpreferredencoding(False)
+    if preferred:
+        candidates.append(preferred)
+    candidates += ["gbk", "cp936"]
+    for codec in candidates:
+        try:
+            return raw.decode(codec)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
 
 
 class TestData(unittest.TestCase):
@@ -890,6 +923,257 @@ class TestGate(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestCheckDir(unittest.TestCase):
+    """--check-dir 核对的是"装完之后那份还在不在"，不是源码目录。
+
+    装好之后被改一行、被半路中断的拷贝覆盖过，都不会有任何报错，
+    只会在某天扫不出东西时才暴露——那时代价已经付出了。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="koumaozi-test-checkdir-")
+        cls.built = package.build(out_dir=cls.tmp)
+        cls.installed = os.path.join(cls.tmp, "installed")
+        with zipfile.ZipFile(cls.built["path"]) as zf:
+            zf.extractall(cls.installed)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_fresh_install_passes(self):
+        result = package.check_dir(self.installed)
+        self.assertTrue(result["passed"], result["problems"])
+        self.assertGreater(result["files"], 30)
+
+    def test_detects_tampered_file(self):
+        dest = tempfile.mkdtemp(dir=self.tmp)
+        with zipfile.ZipFile(self.built["path"]) as zf:
+            zf.extractall(dest)
+        with open(os.path.join(dest, "data", "hats.json"), "a", encoding="utf-8") as fh:
+            fh.write("\n")
+        result = package.check_dir(dest)
+        self.assertFalse(result["passed"])
+        self.assertTrue([p for p in result["problems"] if "hats.json" in p], result["problems"])
+
+    def test_detects_missing_file(self):
+        dest = tempfile.mkdtemp(dir=self.tmp)
+        with zipfile.ZipFile(self.built["path"]) as zf:
+            zf.extractall(dest)
+        os.remove(os.path.join(dest, "references", "glossary.md")) \
+            if os.path.isfile(os.path.join(dest, "references", "glossary.md")) \
+            else os.remove(os.path.join(dest, "SKILL.md"))
+        self.assertFalse(package.check_dir(dest)["passed"])
+
+    def test_source_tree_is_skipped_not_failed(self):
+        """源码态没有 MANIFEST，那是"没什么可核对"，不是"核对不通过"。"""
+        result = package.check_dir(REPO_ROOT)
+        self.assertTrue(result["passed"])
+        self.assertIsNotNone(result.get("skipped"))
+
+    def test_cli_exit_code(self):
+        proc = subprocess.run([sys.executable, os.path.join(SCRIPTS, "package.py"),
+                               "--check-dir", self.installed],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("通过", proc.stdout)
+
+
+class InstallCheckMixin:
+    """--check 的两个平台实现共用同一套断言。
+
+    退出码是这套接口的全部意义：0 不用动 / 1 该动手 / 2 查不到。
+    判错的两个方向后果都不小——把"有更新"判成"已是最新"，用户就一直
+    停在旧版上；反过来把"已是最新"判成"有更新"，`--check || install`
+    会每次都重装一遍。
+    """
+
+    shell = None          # 由子类填
+    script_name = None
+    hint_flag = "-y"      # 结论里给出的"直接可执行"那个开关
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="koumaozi-test-install-")
+        cls.built = package.build(out_dir=cls.tmp)
+        cls.version = cls.built["version"]
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def posix(self, path):
+        return path.replace("\\", "/")
+
+    def stub_install(self, version):
+        """只写一个 VERSION 的假安装目录：够跑版本比较，又不用每次解压整个包。"""
+        dest = tempfile.mkdtemp(dir=self.tmp, prefix="stub-")
+        with open(os.path.join(dest, "VERSION"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(version + "\n")
+        return dest
+
+    def real_install(self):
+        dest = tempfile.mkdtemp(dir=self.tmp, prefix="real-")
+        with zipfile.ZipFile(self.built["path"]) as zf:
+            zf.extractall(dest)
+        return dest
+
+    def run_check(self, target, *extra, **kwargs):
+        argv = self.build_argv(target, *extra)
+        return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=180, cwd=REPO_ROOT,
+                              env=kwargs.get("env"))
+
+    def skipped(self, reason):
+        self.skipTest(reason)
+
+    def test_up_to_date_exits_zero(self):
+        proc = self.run_check(self.stub_install(self.version), "--version", self.version)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("已是最新", proc.stdout)
+
+    def test_update_exits_one_with_hint(self):
+        proc = self.run_check(self.stub_install(self.version), "--version", "99.0.0")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("有更新", proc.stdout)
+        self.assertIn(self.hint_flag, proc.stdout, "报了有更新就得给出能直接执行的命令")
+
+    def test_version_compare_is_numeric_not_lexical(self):
+        """1.10.0 比 1.9.0 新，但按字符串比 1.10.0 < 1.9.0。
+
+        这是这类脚本最经典的真 bug，而且不报错——只是永远"已是最新"。
+        """
+        proc = self.run_check(self.stub_install("1.9.0"), "--version", "1.10.0")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("有更新", proc.stdout)
+
+    def test_local_ahead_is_not_an_error(self):
+        proc = self.run_check(self.stub_install("9.9.9"), "--version", "1.0.0")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("本地比线上新", proc.stdout)
+
+    def test_not_installed(self):
+        proc = self.run_check(os.path.join(self.tmp, "definitely-not-there"),
+                              "--version", "1.0.0")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("未安装", proc.stdout)
+
+    def test_version_with_v_prefix_is_accepted(self):
+        proc = self.run_check(self.stub_install(self.version), "--version", "v" + self.version)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+
+class TestInstallCheckBash(InstallCheckMixin, unittest.TestCase):
+    """bash 版（Linux / macOS / WSL）。"""
+
+    script_name = "install.sh"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.bash = shutil.which("bash")
+
+    def build_argv(self, target, *extra):
+        if not self.bash:
+            self.skipped("没有 bash（Windows 原生环境），这半边交给 CI 的 ubuntu 矩阵")
+        return ([self.bash, self.posix(os.path.join(SCRIPTS, self.script_name)),
+                 "--check", "--target", self.posix(target)] + list(extra))
+
+    def test_tampered_install_is_reported(self):
+        dest = self.real_install()
+        with open(os.path.join(dest, "data", "hats.json"), "a", encoding="utf-8") as fh:
+            fh.write("\n")
+        proc = self.run_check(dest, "--version", self.version)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("清单不符", proc.stdout)
+
+    def test_check_never_writes_to_the_install(self):
+        dest = self.real_install()
+
+        def snapshot():
+            table = {}
+            for current, dirs, files in os.walk(dest):
+                dirs[:] = [d for d in dirs if d != "__pycache__"]
+                for name in files:
+                    path = os.path.join(current, name)
+                    table[path] = (os.path.getsize(path), os.path.getmtime(path))
+            return table
+
+        before = snapshot()
+        self.run_check(dest, "--version", "99.0.0")
+        self.assertEqual(before, snapshot(), "--check 说好了不动磁盘")
+
+    def test_pinned_version_does_not_call_the_network(self):
+        """给了 --version 就不该再去问 API——离线环境、CI 限流都要能跑。"""
+        if os.name == "nt":
+            self.skipped("Windows 下 PATH 分隔符与 Git Bash 不一致，交给 CI 验")
+        stub = tempfile.mkdtemp(dir=self.tmp, prefix="curl-stub-")
+        marker = os.path.join(stub, "called")
+        script = os.path.join(stub, "curl")
+        with open(script, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+        os.chmod(script, 0o755)
+        env = dict(os.environ)
+        env["PATH"] = stub + os.pathsep + env.get("PATH", "")
+        proc = self.run_check(self.stub_install(self.version), "--version", self.version,
+                              env=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(os.path.exists(marker), "--version 已经给了还要去问 API")
+
+
+class TestInstallCheckPowerShell(InstallCheckMixin, unittest.TestCase):
+    """PowerShell 版（Windows）。
+
+    这里踩过真坑：PowerShell 变量名大小写不敏感，函数里写 `$a = ...` 赋值给的
+    是 `[string]$A` 参数，数组被强转成 "1 10 0" 一串，Count 恒为 1，比较结果
+    永远"相等"。表现是 --check 一路报"已是最新"，用户永远装不上新版，而且
+    不报任何错。所以 Windows 这半边不能只靠人肉 eyeball。
+    """
+
+    script_name = "install.ps1"
+    hint_flag = "-Yes"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.pwsh = shutil.which("pwsh")
+
+    def build_argv(self, target, *extra):
+        raise AssertionError("PowerShell 侧不走通用 argv，见 run_check")
+
+    def run_check(self, target, *extra, **kwargs):
+        if not self.pwsh:
+            self.skipped("没有 pwsh（PowerShell 7）")
+        argv = [self.pwsh, "-NoProfile", "-File",
+                os.path.join(SCRIPTS, self.script_name), "-Check",
+                "-Target", target] + list(extra)
+        proc = subprocess.run(argv, capture_output=True, timeout=180, cwd=REPO_ROOT,
+                              env=kwargs.get("env"))
+        return ShellResult(proc.returncode, decode_console(proc.stdout),
+                           decode_console(proc.stderr))
+
+    def test_tampered_install_is_reported(self):
+        dest = self.real_install()
+        with open(os.path.join(dest, "data", "hats.json"), "a", encoding="utf-8") as fh:
+            fh.write("\n")
+        proc = self.run_check(dest, "-Version", self.version)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("清单不符", proc.stdout)
+
+    def test_unknown_flag_does_not_silently_succeed(self):
+        """参数打错时 PowerShell 默认会当没事发生，安装脚本不能这样。"""
+        if not self.pwsh:
+            self.skipped("没有 pwsh（PowerShell 7）")
+        proc = subprocess.run([self.pwsh, "-NoProfile", "-Command",
+                               "& { $ErrorActionPreference='Stop'; "
+                               f"& '{self.posix(os.path.join(SCRIPTS, self.script_name))}' "
+                               "-TotallyUnknownFlag }"],
+                              capture_output=True, timeout=180)
+        self.assertNotEqual(proc.returncode, 0, "未知参数应当报错退出")
 
 
 if __name__ == "__main__":
