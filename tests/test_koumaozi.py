@@ -305,13 +305,68 @@ class TestCorpus(unittest.TestCase):
         cases = common.load_corpus()["cases"]
         kinds = Counter(case["kind"] for case in cases)
         self.assertGreaterEqual(kinds["neutral"], 8)
-        self.assertGreaterEqual(kinds["attack"], 20)
+        self.assertGreaterEqual(kinds["attack"], 30)
+
+    def test_coverage_complete(self):
+        cov = corpus_check.coverage()
+        problems = corpus_check.coverage_problems(cov)
+        self.assertFalse(problems, problems)
+
+    def test_every_pattern_covered(self):
+        cov = corpus_check.coverage()
+        missing = [pid for pid, sources in cov["patterns"].items() if not sources]
+        self.assertEqual(missing, [], f"没有任何语料或示例覆盖的句式: {missing}")
+
+    def test_every_combo_covered(self):
+        cov = corpus_check.coverage()
+        missing = [cid for cid, sources in cov["combos"].items() if not sources]
+        self.assertEqual(missing, [])
+
+    def test_coverage_gate_can_fail(self):
+        cov = corpus_check.coverage()
+        problems = corpus_check.coverage_problems(cov, min_family_cases=99)
+        self.assertTrue(problems, "门槛提到 99 条时门禁必须报错，否则门禁是假的")
 
     def test_neutral_scores_zero(self):
         for row in corpus_check.run():
             if row["kind"] == "neutral":
                 self.assertEqual(row["label_score"], 0, row)
                 self.assertEqual(row["ids"], [], row)
+
+
+class TestPerformance(unittest.TestCase):
+    """正则数量和长度都上去了，回溯风险必须有个门禁盯着。
+
+    阈值定得宽（2s），只拦数量级退化——比如某条正则写成嵌套量词导致回溯爆炸，
+    真出问题时耗时会从毫秒跳到几十秒，撞线的是那个。
+    """
+
+    def setUp(self):
+        self.patterns = hat_scan.compile_patterns()
+
+    def timed(self, text):
+        import time
+        start = time.perf_counter()
+        findings, chars = hat_scan.scan_text("<bench>", text, self.patterns)
+        return time.perf_counter() - start, findings, chars
+
+    def test_normal_long_text(self):
+        text = "他说的这个方案在可维护性和部署成本上都有问题，评审组要求补充压测数据。" * 450
+        cost, _, chars = self.timed(text)
+        self.assertGreater(chars, 10000)
+        self.assertLess(cost, 2.0, f"{chars} 字耗时 {cost:.2f}s")
+
+    def test_single_sentence_without_punctuation(self):
+        text = "方案可维护性部署成本回滚速度" * 1750
+        cost, _, chars = self.timed(text)
+        self.assertGreater(chars, 20000)
+        self.assertLess(cost, 3.0, f"单句 {chars} 字耗时 {cost:.2f}s")
+
+    def test_dense_attacks(self):
+        text = "收钱的吧，一看就是那路人，早晚遭报应。标准公知体，一条多少钱？" * 150
+        cost, findings, chars = self.timed(text)
+        self.assertGreater(len(findings), 500, "密集攻击文本应产生大量命中")
+        self.assertLess(cost, 3.0, f"{chars} 字 {len(findings)} 命中耗时 {cost:.2f}s")
 
 
 class TestGates(unittest.TestCase):
