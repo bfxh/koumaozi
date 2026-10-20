@@ -1,0 +1,60 @@
+name: gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 语法编译
+        run: python -m compileall -q scripts tests
+
+      - name: 数据一致性门禁
+        run: python scripts/verify_data.py
+
+      - name: 内容量门禁
+        run: python scripts/wordcount.py --min 10000
+
+      - name: 单元测试
+        run: python -m unittest discover -s tests -v
+
+      - name: CLI 冒烟（扫描器命中已知样本）
+        run: |
+          python scripts/hat_scan.py --text "典型的带节奏，一条多少钱？" --json > /tmp/scan.json
+          python - <<'PY'
+          import json
+          data = json.load(open("/tmp/scan.json", encoding="utf-8"))
+          assert data["summary"]["pattern_hits"] >= 2, data
+          print("scan ok:", data["summary"])
+          PY
+
+      - name: CLI 冒烟（生成器无残留槽位）
+        run: |
+          python scripts/hat_generate.py --target "某方案" --count 8 --json --seed 1 > /tmp/gen.json
+          python - <<'PY'
+          import json, re
+          data = json.load(open("/tmp/gen.json", encoding="utf-8"))
+          for item in data["results"]:
+              assert not re.search(r"\{[^{}]*\}", item["text"]), item["text"]
+              assert len(item["counter"]) >= 2, item
+          print("generate ok:", len(data["results"]))
+          PY
