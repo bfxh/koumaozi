@@ -51,6 +51,12 @@ jobs:
         if: matrix.python == '3.13'
         run: python -W error::DeprecationWarning -m unittest discover -s tests
 
+      # 文档即测试放在每次 push 上：读者会逐字复制文档里的命令，
+      # 脚本改名、参数改了、样例文件挪了位置，源码门禁一条都不会红。
+      - name: 文档命令门禁（仅 3.12）
+        if: matrix.python == '3.12'
+        run: python scripts/doc_smoke.py
+
       # 打包自检放在每次 push 上，而不是只在发版时跑：
       # 产物坏了要在合并前就知道，别等打了 tag 才发现 dist 里少文件。
       - name: 产物门禁（打包 + 解压自检，仅 3.12）

@@ -1,7 +1,7 @@
 ---
 name: "koumaozi"
 description: "扣帽子工程：识别、拆解、反制与生成中文语境下的标签化攻击。当文本出现人身定性、动机揣测、上纲上线、群体污名、道德审判等表达，或用户要求'看看这段话哪里在扣帽子''帮我拆一下这个回复''生成带帽子的短评''这篇评论是不是在带节奏''这段连招怎么拆''我改完之后好点了吗'时调用。内置 55 个帽子词条、24 式攻击句式、10 条固定连招、8 大帽子家族、55 条带覆盖门禁的回归语料（含 8 条引用/否认语境样本），附带可执行的扫描器/生成器/改稿对比工具（Python 标准库零依赖）。输出前必须叠加 anti-ai-flavor 去掉 AI 腔。"
-version: "1.4.0"
+version: "1.5.0"
 ---
 
 # 扣帽子工程 (Koumaozi)
@@ -174,8 +174,8 @@ version: "1.4.0"
 1. **先跑扫描器**，拿到机器初筛：
 
 ```bash
-python3 scripts/hat_scan.py --file draft.md --json
-python3 scripts/hat_scan.py --target notes/ --min-severity Warning
+python3 scripts/hat_scan.py --file examples/draft.md --json
+python3 scripts/hat_scan.py --target examples/notes/ --min-severity Warning
 python3 scripts/hat_scan.py --text "这种公知体，收钱办事的吧"
 ```
 
@@ -317,6 +317,7 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 | `scripts/hat_generate.py` | 按家族/帽子/句式/连招拼装文案 | `--target`、`--hat`、`--family`、`--pattern`、`--combo`、`--intensity`、`--platform`、`--seed`、`--slot` |
 | `scripts/hat_diff.py` | 改稿前后对比：分数升降、消除了什么、新增了什么 | `--before`、`--after`、`--must-drop`、`--max-score`、`--json` |
 | `scripts/corpus_check.py` | 回归语料门禁：正样本该抓必抓、负样本一个不许抓 | `--json`、`--verbose` |
+| `scripts/doc_smoke.py` | 文档即测试：把文档里的命令示例全跑一遍 | `--json`、`--verbose`、`--filter` |
 | `scripts/verify_data.py` | 数据与仓库一致性门禁（含版本三处同步） | `--json` |
 | `scripts/wordcount.py` | 内容量统计 | `--min`、`--json` |
 | `scripts/package.py` | 打包 skill 包并自检（解压后验证，不验源目录） | `--verify`、`--out`、`--keep` |
@@ -339,22 +340,24 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 
 ```bash
 # 我改完之后真的好点了吗
-python3 scripts/hat_diff.py --before draft-v1.md --after draft-v2.md
+python3 scripts/hat_diff.py --before examples/draft-v1.md --after examples/draft-v2.md
 
 # 当门禁用：标签分至少降 10，且改后不得超过 30 分
-python3 scripts/hat_diff.py --before a.md --after b.md --must-drop 10 --max-score 30
+python3 scripts/hat_diff.py --before examples/a.md --after examples/b.md --must-drop 10 --max-score 30
 ```
 
 ## 质量门禁
 
-本仓库的 CI 跑六道：
+本仓库的 CI 跑八道：
 
 1. `verify_data.py` —— schema、家族覆盖、别名冲突、正则可编译、模板槽位有默认值、连招序列合法、语料期望合法、文档里引用的 HAT/PAT/CMB/CRP 编号真实存在、脚本命名 snake_case、skill name 与目录名一致（仅开发仓）、版本号三处一致（VERSION / SKILL.md / CHANGELOG）
 2. `wordcount.py --min 10000` —— 内容量下限
 3. `corpus_check.py` —— 55 条回归语料：39 条正样本该抓必抓，8 条负样本一个不许抓，8 条语境样本（字面有帽子、语境是引用或否认）必须降到零分；外加覆盖门禁（每个句式/连招必被覆盖，每家族 ≥2 条语料且 ≥2 顶帽子，denied/quoted 两条降级分支各 ≥2 条语料）
-4. `unittest` —— 扫描器正例/负例/否认降级、连招检测、生成器无残留槽位与同 seed 复现、diff 升降方向、数据加载、评分单调性，外加**性能门禁**（长文/超长单句/高命中密度三种输入必须在线性时间内跑完，防正则回溯爆炸）
-5. `compileall` —— 全脚本语法
-6. CLI 冒烟 —— 扫描器、生成器、连招生成、改稿对比各跑一遍真实命令
+4. `doc_smoke.py` —— **文档即测试**：本文件与 README / references 里 29 条命令示例逐条真跑，断言退出码 0、`--json` 输出真是 JSON、引用的样例文件真的存在。文档示例是唯一会被读者逐字复制的东西，它腐烂起来是静默的
+5. `unittest` —— 扫描器正例/负例/否认降级、连招检测、生成器无残留槽位与同 seed 复现、diff 升降方向、数据加载、评分单调性，外加**性能门禁**（长文/超长单句/高命中密度三种输入必须在线性时间内跑完，防正则回溯爆炸）
+6. `compileall` —— 全脚本语法
+7. 产物门禁 —— `package.py --verify` 打包后解压自检，验证对象是交付的那一份，不是源目录
+8. CLI 冒烟 —— 扫描器、生成器、连招生成、改稿对比各跑一遍真实命令
 
 门禁的意义不在通过，在于**挡住"看着像有内容"的改动**：加一顶帽子必须补反制要点，改模板必须保证槽位有默认值，写文档引用编号必须真实存在。
 

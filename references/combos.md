@@ -233,7 +233,7 @@
 用扫描器验一下自己写的回复有没有踩到连招：
 
 ```bash
-python3 scripts/hat_scan.py --file reply.md
+python3 scripts/hat_scan.py --file examples/reply.md
 ```
 
 命中的连招会以 `Critical`（封死 3 向以上）或 `Warning` 标注，并给出"先拆"提示：

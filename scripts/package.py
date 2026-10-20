@@ -31,7 +31,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
-INCLUDE_DIRS = ("data", "scripts", "references")
+INCLUDE_DIRS = ("data", "scripts", "references", "examples")
 INCLUDE_FILES = ("SKILL.md", "README.md", "CHANGELOG.md", "LICENSE", "VERSION")
 SKIP_NAMES = ("__pycache__", "report.json", "dist")
 SKIP_SUFFIXES = (".pyc", ".pyo", ".sha256")
@@ -247,8 +247,8 @@ def main(argv=None):
     common.ensure_utf8_stdout()
     parser = argparse.ArgumentParser(description="打包并自检 skill 包")
     parser.add_argument("--out", default=None, help="输出目录，默认 dist/")
-    parser.add_argument("--verify", nargs="?", const="", default=None,
-                        help="打包后自检；也可直接给一个已有 zip 路径")
+    parser.add_argument("--verify", nargs="*", default=None,
+                        help="打包后自检；也可给出一个或多个已有 zip 路径")
     parser.add_argument("--keep", action="store_true", help="保留解压目录便于排查")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -260,24 +260,35 @@ def main(argv=None):
         print(f"sha256 {built['sha256']}")
         return 0
 
-    # --verify 不带值：先打包再验；带值：只验指定 zip（CI 里验刚产出的那一份）
-    target = args.verify
-    if not target:
+    # --verify 不带值：先打包再验；带值：只验指定的那些 zip。
+    # 允许多个是有原因的：dist/ 里通常堆着好几个版本，`dist/koumaozi-*.zip`
+    # 展开后是多个参数，只收一个会直接「unrecognized arguments」。
+    targets = args.verify
+    if targets is None:
         built = build(args.out)
-        target = built["path"]
-        print(f"打包 {os.path.basename(target)}  {built['files']} 个文件  "
+        print(f"打包 {os.path.basename(built['path'])}  {built['files']} 个文件  "
+              f"{built['bytes'] / 1024:.1f} KiB")
+        print(f"sha256 {built['sha256']}")
+        return 0
+
+    if not targets:
+        built = build(args.out)
+        targets = [built["path"]]
+        print(f"打包 {os.path.basename(built['path'])}  {built['files']} 个文件  "
               f"{built['bytes'] / 1024:.1f} KiB")
 
-    result = verify(target, keep=args.keep)
+    results = [verify(path, keep=args.keep) for path in targets]
     if args.json:
         import json
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        payload = results[0] if len(results) == 1 else results
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(f"自检 {os.path.basename(target)}  {result['files']} 个文件")
-        for problem in result["problems"]:
-            print(f"  × {problem}")
-        print("通过" if result["passed"] else f"失败：{len(result['problems'])} 项")
-    return 0 if result["passed"] else 1
+        for result in results:
+            print(f"自检 {os.path.basename(result['path'])}  {result['files']} 个文件")
+            for problem in result["problems"]:
+                print(f"  × {problem}")
+            print("通过" if result["passed"] else f"失败：{len(result['problems'])} 项")
+    return 0 if all(r["passed"] for r in results) else 1
 
 
 if __name__ == "__main__":

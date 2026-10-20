@@ -14,6 +14,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter
 
@@ -33,10 +34,30 @@ def id_names():
     return table
 
 
+FILE_EXT_RE = re.compile(r"^[^\n]{1,200}\.(?:md|markdown|txt|rst|text)$", re.I)
+
+
+def looks_like_path(value):
+    """判"这看起来是路径"——不然打字打错一个文件名，会被当成正文分析。
+
+    区分依据：带常见文档后缀，或者含路径分隔符。真人写的短句不会长成这样。
+    """
+    value = value.strip()
+    if FILE_EXT_RE.match(value):
+        return True
+    return os.sep in value or (os.altsep and os.altsep in value)
+
+
 def load_source(value, label):
     if os.path.isfile(value):
         with open(value, "r", encoding="utf-8") as fh:
             return fh.read(), common.relpath(value)
+    if looks_like_path(value):
+        # 静默把 "draft-v2.md" 当正文分析，用户会以为对比了两个文件。
+        # 这种错误必须炸出来，不能给出一个看着正常的错误结果。
+        raise FileNotFoundError(
+            f"{label} 看着是文件路径但文件不存在: {value}"
+            "（确实要当正文传入请改用 --before-text / --after-text）")
     return value, label
 
 
@@ -159,8 +180,13 @@ def main(argv=None):
         parser.error("需要 --before/--before-text 与 --after/--after-text 两侧输入")
 
     compiled = hat_scan.compile_patterns()
-    before = analyse(before_value, "<before>", compiled)
-    after = analyse(after_value, "<after>", compiled)
+    try:
+        before = analyse(before_value, "<before>", compiled)
+        after = analyse(after_value, "<after>", compiled)
+    except FileNotFoundError as exc:
+        # 用 argparse 的报错通道：打出 usage + 干净的错误，不要甩 traceback
+        parser.error(str(exc))
+        return 2
 
     names = id_names()
     removed, added = diff_counts(before, after, names)

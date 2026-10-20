@@ -17,6 +17,7 @@ sys.path.insert(0, SCRIPTS)
 
 import common  # noqa: E402
 import corpus_check  # noqa: E402
+import doc_smoke  # noqa: E402
 import hat_diff  # noqa: E402
 import hat_generate  # noqa: E402
 import hat_scan  # noqa: E402
@@ -549,6 +550,28 @@ class TestPackage(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertTrue(any("hats.json" in p for p in result["problems"]), result["problems"])
 
+    def test_verify_accepts_multiple_packages(self):
+        """dist/ 里通常堆着好几个版本，`dist/*.zip` 展开后是多个参数。
+
+        只收一个会直接 unrecognized arguments——文档里那条命令就跑了。
+        """
+        import shutil
+        second = os.path.join(self.tmp, "copy.zip")
+        shutil.copy(self.zip_path, second)
+        self.assertEqual(package.main(["--verify", self.zip_path, second]), 0)
+
+    def test_verify_fails_if_any_package_is_bad(self):
+        import shutil
+        import zipfile
+        broken = os.path.join(self.tmp, "among-bad.zip")
+        with zipfile.ZipFile(self.zip_path) as zin, \
+                zipfile.ZipFile(broken, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == "data/combos.json":
+                    continue
+                zout.writestr(item, zin.read(item.filename))
+        self.assertEqual(package.main(["--verify", self.zip_path, broken]), 1)
+
     def test_rejects_path_traversal(self):
         """包内路径穿越（../../etc/x）必须拒绝，别等解压出来才发现。"""
         import zipfile
@@ -617,6 +640,110 @@ class TestReleaseNotes(unittest.TestCase):
         self.assertIn("新东西", body)
         self.assertIn("### 细节", body)
         self.assertNotIn("旧东西", body)
+
+
+class TestDocSmoke(unittest.TestCase):
+    """文档即测试：读者会逐字复制文档里的命令。
+
+    脚本改名、参数改了、样例文件挪了位置，源码门禁一条都不会红，
+    但读者照抄第一行就报 No such file or directory。文档腐烂是静默的。
+    """
+
+    def test_extracts_commands_from_docs(self):
+        cases = doc_smoke.collect()
+        self.assertGreaterEqual(len(cases), 20, "抽到的命令太少，抽取逻辑大概断了")
+        for case in cases:
+            self.assertTrue(case["command"].startswith(("python3 scripts/", "python scripts/")))
+
+    def test_strip_comment_keeps_hash_inside_quotes(self):
+        self.assertEqual(doc_smoke.strip_comment('python3 scripts/x.py --text "a # b"  # 注释'),
+                         'python3 scripts/x.py --text "a # b"')
+        self.assertEqual(doc_smoke.strip_comment("python3 scripts/x.py --count 3"),
+                         "python3 scripts/x.py --count 3")
+
+    def test_handles_line_continuation(self):
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="koumaozi-test-doc-")
+        try:
+            path = os.path.join(tmp, "doc.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("```bash\npython3 scripts/hat_scan.py \\\n  --text \"一句话\"\n```\n")
+            original = common.REPO_ROOT
+            common.REPO_ROOT = tmp
+            try:
+                cases = doc_smoke.extract(path)
+            finally:
+                common.REPO_ROOT = original
+            self.assertEqual(len(cases), 1)
+            self.assertIn("--text", cases[0]["command"])
+            self.assertNotIn("\\", cases[0]["command"])
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_every_referenced_file_exists(self):
+        """文档里点名的样例文件必须真的在——这条最便宜也最有用。"""
+        import shlex
+        missing = []
+        for case in doc_smoke.collect():
+            for token in shlex.split(case["command"]):
+                if token.startswith("-") or "*" in token or "/" not in token:
+                    continue
+                if not os.path.exists(os.path.join(REPO_ROOT, token)):
+                    missing.append(f"{case['source']}: {token}")
+        self.assertEqual(missing, [], f"文档引用了不存在的路径: {missing}")
+
+    def test_missing_script_is_reported_clearly(self):
+        case = {"source": "fake:1", "command": "python3 scripts/no_such_tool.py --x"}
+        row = doc_smoke.run_case(case)
+        self.assertFalse(row["passed"])
+        self.assertIn("脚本不存在", row["problems"][0])
+
+    def test_bad_flag_fails(self):
+        case = {"source": "fake:2",
+                "command": "python3 scripts/hat_scan.py --min-severity Nope --text x"}
+        row = doc_smoke.run_case(case)
+        self.assertFalse(row["passed"])
+
+    def test_every_doc_command_runs(self):
+        """真跑一遍。慢一点（几条子进程），但这是这道门禁的全部意义。"""
+        rows = doc_smoke.run()
+        failed = [r for r in rows if not r["passed"]]
+        self.assertEqual(failed, [], failed)
+
+
+class TestDiffInput(unittest.TestCase):
+    """--before 收到一个不存在的文件名时，绝不能当成正文分析。
+
+    静默把 "draft-v2.md" 当正文，用户会以为对比了两个文件，拿到一个
+    看着正常的错误结果——比直接报错危险得多。
+    """
+
+    def test_path_like_detection(self):
+        self.assertTrue(hat_diff.looks_like_path("draft-v2.md"))
+        self.assertTrue(hat_diff.looks_like_path("docs/a.txt"))
+        self.assertTrue(hat_diff.looks_like_path(r"notes\draft.md"))
+        self.assertFalse(hat_diff.looks_like_path("收钱的吧，一看就是那路人。"))
+        self.assertFalse(hat_diff.looks_like_path("样本只覆盖两个城市"))
+
+    def test_missing_file_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            hat_diff.load_source("definitely-missing.md", "<before>")
+
+    def test_plain_text_still_passes_through(self):
+        text = "收钱的吧，一看就是那路人。"
+        raw, name = hat_diff.load_source(text, "<before>")
+        self.assertEqual(raw, text)
+        self.assertEqual(name, "<before>")
+
+    def test_cli_reports_missing_file_without_traceback(self):
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "hat_diff.py"),
+             "--before", "examples/draft-v1.md", "--after", "nope.md"],
+            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("文件不存在", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":
