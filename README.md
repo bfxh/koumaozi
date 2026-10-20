@@ -25,31 +25,30 @@
 **用 Release 包**（推荐）：
 
 ```bash
-# Linux / macOS / WSL
-curl -fL -O https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip
-curl -fL -O https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip.sha256
-sha256sum -c koumaozi-1.4.0.zip.sha256
+# Linux / macOS / WSL —— 版本号从 latest 的 302 里取，不用手改
+TAG=$(curl -sI https://github.com/bfxh/koumaozi/releases/latest \
+  | grep -i '^location' | sed 's#.*/tag/##' | tr -d '\r')
+ZIP="koumaozi-${TAG#v}.zip"
+curl -fL -O "https://github.com/bfxh/koumaozi/releases/download/$TAG/$ZIP"
+curl -fL -O "https://github.com/bfxh/koumaozi/releases/download/$TAG/$ZIP.sha256"
+sha256sum -c "$ZIP.sha256"          # macOS: shasum -a 256 -c "$ZIP.sha256"
 mkdir -p ~/.workbuddy/skills/koumaozi
-unzip -o koumaozi-1.4.0.zip -d ~/.workbuddy/skills/koumaozi
+unzip -o "$ZIP" -d ~/.workbuddy/skills/koumaozi
 ```
 
-```powershell
-# Windows
-Invoke-WebRequest "https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip" -OutFile "koumaozi-1.4.0.zip"
-Expand-Archive "koumaozi-1.4.0.zip" -DestinationPath "$HOME\.workbuddy\skills\koumaozi" -Force
-```
+Windows 下同理，用 `Invoke-WebRequest` 取 `Headers.Location` 里的 tag 再拼文件名，或者直接跑下面的 `install.ps1`（它替你处理这些）。
 
 **用安装脚本**（会先验 sha256，再在临时目录自检，通过了才动目标目录）：
 
 ```bash
 bash scripts/install.sh                    # 装最新版
-bash scripts/install.sh --version v1.4.0   # 指定版本
+bash scripts/install.sh --version <tag>    # 指定版本，如 v1.5.0
 bash scripts/install.sh --from-dir .       # 开发态：软链，改代码立即生效
 ```
 
 ```powershell
 .\scripts\install.ps1
-.\scripts\install.ps1 -Version v1.4.0
+.\scripts\install.ps1 -Version <tag>
 .\scripts\install.ps1 -FromDir .           # 开发态：Junction 指向源码
 ```
 
@@ -62,13 +61,13 @@ bash scripts/install.sh --from-dir .       # 开发态：软链，改代码立�
 python3 scripts/hat_scan.py --text "这种公知体还用看？一条多少钱？"
 
 # 扫整个目录，只报 Warning 以上
-python3 scripts/hat_scan.py --target notes/ --min-severity Warning
+python3 scripts/hat_scan.py --target examples/notes/ --min-severity Warning
 
 # 整串连招（10 条固定连招，四向封死直接判 Critical）
 python3 scripts/hat_generate.py --target "某博主" --combo CMB-01 --seed 3
 
 # 改稿前后对比：分数升降、消除了什么、新增了什么
-python3 scripts/hat_diff.py --before draft-v1.md --after draft-v2.md
+python3 scripts/hat_diff.py --before examples/draft-v1.md --after examples/draft-v2.md
 
 # 回归语料门禁：正样本该抓必抓，负样本一个不许抓
 python3 scripts/corpus_check.py
@@ -104,12 +103,17 @@ koumaozi/
 │   ├── counterplay.md                反制手册：三阶响应、场景剧本、六种失败模式
 │   ├── generation-playbook.md        生成手册：参数决策、强度控制、去 AI 味
 │   └── casebook.md                   六个案例复盘：原文 → 扫描 → 拆解 → 处置
+├── examples/                         文档命令引用的样例文件（照抄命令就能跑）
+│   ├── draft.md  draft-v1.md  draft-v2.md
+│   ├── a.md  b.md  reply.md
+│   └── notes/comment-01.md  notes/comment-02.md
 ├── scripts/
 │   ├── common.py                     数据加载、分句、角色判定、编码兜底
 │   ├── hat_scan.py                   扫描器（帽子 / 句式 / 连招 / 否认降级）
 │   ├── hat_generate.py               生成器（单条 + 连招，可复现）
 │   ├── hat_diff.py                   改稿对比（可当门禁）
 │   ├── corpus_check.py               回归语料门禁
+│   ├── doc_smoke.py                  文档即测试：把文档里的命令全跑一遍
 │   ├── verify_data.py                一致性门禁（含版本同步）
 │   ├── wordcount.py                  内容量门禁
 │   ├── package.py                    打包 + 产物自检（解压后验证，不验源目录）
@@ -117,7 +121,7 @@ koumaozi/
 │   ├── install.sh                    安装（Linux/macOS/WSL）
 │   └── install.ps1                   安装（Windows，Junction 支持开发态）
 ├── .github/workflows/
-│   ├── ci.yml                        六道门禁 × py3.9/3.12/3.13
+│   ├── ci.yml                        门禁 × py3.9/3.12/3.13
 │   └── release.yml                   打 tag 发版：门禁 → 打包自检 → 装一遍 → 发布 → 回收复检
 └── tests/test_koumaozi.py            门禁测试
 ```
@@ -179,18 +183,30 @@ AI 写的帽子 100% 有 AI 味，因为它倾向于把攻击写得"完整"—�
 
 ## 质量门禁
 
-CI 跑六道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
+CI 跑八道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
 
 | 门禁 | 内容 |
 |---|---|
-| `verify_data.py` | schema、家族覆盖、别名冲突、正则可编译、模板槽位有默认值、连招序列合法、语料期望合法、文档引用的 HAT/PAT/CMB/CRP 编号真实存在、命名规范 |
+| `verify_data.py` | schema、家族覆盖、别名冲突、正则可编译、模板槽位有默认值、连招序列合法、语料期望合法、文档引用的 HAT/PAT/CMB/CRP 编号真实存在、命名规范、版本号三处一致 |
 | `wordcount.py --min 10000` | 中文内容量下限 |
 | `corpus_check.py` | 55 条回归语料 + 覆盖门禁：正样本该抓必抓、负样本一个不许抓、语境样本（引用/否认）必须降到零、每个句式/连招/家族都必须被覆盖 |
+| `doc_smoke.py` | 文档即测试：README / SKILL / references 里 29 条命令示例逐条真跑，断言退出码 0、`--json` 输出真的是 JSON、引用的样例文件真的存在 |
 | `unittest` | 扫描器正例/负例/否认降级、连招检测、生成器无残留槽位与同 seed 复现、diff 升降方向、评分单调性，外加性能门禁（长文 / 超长单句 / 高命中密度三种输入必须线性时间跑完，防正则回溯爆炸） |
 | `compileall` | 全脚本语法 |
+| 产物门禁 | `package.py --verify` 打包后解压自检，验证对象是交付的那一份 |
 | CLI 冒烟 | 扫描、生成、连招生成、改稿对比各跑一遍真实命令 |
 
 门禁的意义不在通过，在于挡住"看着像有内容"的改动：加一顶帽子必须补反制要点，改模板必须保证槽位有默认值，写文档引用编号必须真实存在，动正则必须过回归语料。
+
+### 文档即测试
+
+文档示例是唯一会被读者**逐字复制**的东西。脚本改名、参数改了、样例文件挪了位置，源码门禁一条都不会红，但读者照抄第一行就是 `No such file or directory`。**文档腐烂是静默的**，所以它得有自己的门禁。
+
+`doc_smoke.py` 抽出所有围栏代码块里以 `python3 scripts/` 开头的命令（支持 `\` 续行、行尾注释、glob），换成当前解释器真跑，并额外断言 `--json` 的输出真是 JSON。
+
+它上线第一次就抓到一个真问题：`hat_diff.py --after draft-v2.md`（文件不存在）**没有报错**——`load_source` 把不存在的路径当成正文分析了。读者会以为对比了两个文件，拿到一个看着正常、实际在对比字符串 `"draft-v2.md"` 的结果。修法是加一条启发式：带 `.md/.txt/.rst` 后缀或含路径分隔符却不存在，直接报错并提示改用 `--before-text`。
+
+`examples/` 目录就是为了让这 29 条命令照抄能跑而存在的，它也一起打进发布包——**装了包再看 SKILL.md，例子还是能跑**。
 
 **回归语料是这套门禁里最有用的一个**：39 条正样本保证"该抓的抓到"，8 条负样本保证"不该抓的别抓"。第一次跑就有 4 条正样本漏检（"这不是境外势力是什么""收了多少公关费""什么时候才肯停止""先去读两本书"），全部补了正则才通过——这就是语料的价值，它逼工具兑现承诺。
 
@@ -228,7 +244,7 @@ CI 跑六道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
 
 ```bash
 python3 scripts/package.py --verify         # 打包并自检
-python3 scripts/package.py --verify dist/koumaozi-1.4.0.zip   # 只验已有包
+python3 scripts/package.py --verify dist/koumaozi-*.zip     # 只验已有包
 python3 scripts/release_notes.py            # 看这一版会发什么说明
 ```
 

@@ -45,6 +45,7 @@ jobs:
           python scripts/verify_data.py
           python scripts/wordcount.py --min 10000
           python scripts/corpus_check.py
+          python scripts/doc_smoke.py
           python -m unittest discover -s tests
 
       # 打包自检验的是"解压后的产物"，不是源目录。

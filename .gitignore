@@ -5,3 +5,4 @@ report.json
 *.egg-info/
 .venv/
 dist/
+.commitmsg.txt
