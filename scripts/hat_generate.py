@@ -93,7 +93,9 @@ def pick_hats(args, rng):
         if hit is None:
             raise SystemExit(f"未知帽子: {args.hat}")
         return [hit]
-    pool = hats
+    # 必须复制：rng.shuffle 是就地打乱，直接 shuffle 传进来的列表会污染调用方。
+    # data 层现在带缓存，共享对象被就地改动后，同 seed 会产出不同结果。
+    pool = list(hats)
     if args.family:
         pool = [h for h in pool if h["family"] == args.family]
         if not pool:

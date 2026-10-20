@@ -34,10 +34,28 @@ def ensure_utf8_stdout():
                 pass
 
 
+_JSON_CACHE = {}
+
+
 def load_json(name):
+    """按 (文件名, mtime) 缓存解析结果。
+
+    90 个测试里有大量重复读 hats.json / patterns.json，每次都重新 parse
+    一遍纯属白烧（实测占了单测总耗时的一半）。mtime 进 key 是为了改了
+    数据文件能立刻失效，不会读到旧内容。
+
+    ⚠️ 返回的是共享对象，**不要就地修改**。要改先自己 copy 一份。
+    """
     path = os.path.join(DATA_DIR, name)
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    stamp = os.path.getmtime(path)
+    key = (name, stamp)
+    if key not in _JSON_CACHE:
+        with open(path, "r", encoding="utf-8") as fh:
+            _JSON_CACHE[key] = json.load(fh)
+        # 只留当前文件的最新版本，避免长期运行时越攒越多
+        for stale in [item for item in _JSON_CACHE if item[0] == name and item != key]:
+            _JSON_CACHE.pop(stale, None)
+    return _JSON_CACHE[key]
 
 
 def load_hats():

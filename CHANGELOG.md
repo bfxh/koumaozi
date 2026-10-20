@@ -4,6 +4,31 @@
 
 `## <版本号>` 这一行的格式被 `scripts/release_notes.py` 依赖——改格式会让发布流程抽不到说明，CI 会拦住。
 
+## 1.6.0
+
+### 新增
+
+- **统一门禁入口** `scripts/gate.py`：八道门禁的顺序、集合、每道挡什么，全部写在代码里。本地 `python3 scripts/gate.py` 与 CI 跑的是同一套。
+  - `--list` / `--explain`：有哪些门禁、每道挡什么、失败了先看哪
+  - `--tier core|full` / `--only data,corpus`：按需跑
+  - `--markdown PATH`：产出 Step Summary 用的表格
+  - `--stop-early`：本地快速迭代时第一道失败就退出（默认跑完，一次看全）
+- **`scripts/cli_smoke.py`**：把 `ci.yml` 里五个 shell 冒烟 step 收编成脚本，本地可一条命令跑。
+- 门禁失败时直接给出三件事：输出了什么、**这道门禁挡的是什么**、先看哪里。
+
+### 变更
+
+- `ci.yml` / `release.yml` 只决定"哪个 Python 版本跑哪一层"，不再逐个列举脚本名。新增测试 `test_workflows_go_through_single_entry` 盯着这件事——谁在 yml 里再抄一遍脚本名，CI 就红。
+- CI 摘要改由 `gate.py --markdown` 产出，workflow 只 `cat`。在 yml 里嵌 heredoc 拼 JSON 很容易被缩进和引号搞死，而且只在 CI 上才暴露。
+- 单元测试里"跑全部文档命令"那条在 gate 下跳过（与 `docs` 门禁重复，省 12s）；直接跑 `unittest` 时仍然生效。
+
+### 修复
+
+- `doc_smoke.py` 遇到文档里的 `scripts/gate.py` 示例会**无限递归**（gate → docs → doc_smoke → gate）。这类命令现在只登记不执行，输出里明确写"跳过 N 条（会递归）"；`--list` / `--explain` 不跑门禁，照跑。
+- `common.load_json` 加缓存（key 含文件 mtime）。90 多个测试反复 parse 同一批 JSON 纯属白烧。**代价是暴露了一个潜伏的别名 bug**：`hat_generate` 里 `pool = hats` 没有复制，`rng.shuffle(pool)` 就地打乱了共享列表——以前每次重新 parse 掩盖了它，加缓存后同 seed 会产出不同结果。改成 `list(hats)`。
+- 测试里用子进程点名整个测试类，而那个类里正好有这条测试自己 → 无限级联出子进程。改成只点名那一条测试方法，并加超时。
+- `skipIf` 装饰器被插在错误函数上（新增测试时挤位），导致"跳过 11 秒"实际没跳过。补了一条测试专门盯这个错位。
+
 ## 1.5.0
 
 ### 新增

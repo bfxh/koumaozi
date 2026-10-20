@@ -14,8 +14,9 @@ concurrency:
   group: gates-${{ github.ref }}
   cancel-in-progress: true
 
-# 锁 LTS 而不是 ubuntu-latest：latest 会在 2026-10 迁到 Ubuntu 26，
-# 某天门禁会因为底层镜像换版而莫名其妙红一次。门禁要的是确定性。
+# 门禁的顺序、集合、每道挡什么，全部定义在 scripts/gate.py。
+# 这个文件只决定"哪个 Python 版本跑哪一层"，不再逐个列举脚本——
+# 两处各写一份就会出现"本地绿、CI 红"。
 jobs:
   gates:
     name: py${{ matrix.python }}
@@ -32,110 +33,21 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: 语法编译
-        run: python -m compileall -q scripts tests
+      # 3.12 跑全量并顺手产摘要；另外两个版本只跑核心，省时间
+      - name: 门禁（全量，仅 3.12）
+        if: matrix.python == '3.12'
+        run: python scripts/gate.py --markdown gate.md
 
-      - name: 数据一致性门禁
-        run: python scripts/verify_data.py
-
-      - name: 内容量门禁
-        run: python scripts/wordcount.py --min 10000
-
-      - name: 回归语料门禁
-        run: python scripts/corpus_check.py
-
-      - name: 单元测试
-        run: python -m unittest discover -s tests -v
+      - name: 门禁（核心）
+        if: matrix.python != '3.12'
+        run: python scripts/gate.py --tier core
 
       - name: 单元测试（弃用警告视为失败，仅 3.13）
         if: matrix.python == '3.13'
         run: python -W error::DeprecationWarning -m unittest discover -s tests
+        env:
+          KOUMAOZI_SKIP_DOC_SMOKE: "1"
 
-      # 文档即测试放在每次 push 上：读者会逐字复制文档里的命令，
-      # 脚本改名、参数改了、样例文件挪了位置，源码门禁一条都不会红。
-      - name: 文档命令门禁（仅 3.12）
+      - name: 摘要
         if: matrix.python == '3.12'
-        run: python scripts/doc_smoke.py
-
-      # 打包自检放在每次 push 上，而不是只在发版时跑：
-      # 产物坏了要在合并前就知道，别等打了 tag 才发现 dist 里少文件。
-      - name: 产物门禁（打包 + 解压自检，仅 3.12）
-        if: matrix.python == '3.12'
-        run: python scripts/package.py --verify
-
-      - name: CLI 冒烟（扫描器）
-        run: |
-          python scripts/hat_scan.py --text "典型的带节奏，一条多少钱？" --json > /tmp/scan.json
-          python - <<'PY'
-          import json
-          data = json.load(open("/tmp/scan.json", encoding="utf-8"))
-          summary = data["summary"]
-          assert summary["hat_hits"] >= 1, summary
-          assert summary["pattern_hits"] >= 1, summary
-          assert summary["max_label_score"] > 0, summary
-          print("scan ok:", summary)
-          PY
-
-      - name: CLI 冒烟（单条生成）
-        run: |
-          python scripts/hat_generate.py --target "某方案" --count 8 --json --seed 1 > /tmp/gen.json
-          python - <<'PY'
-          import json, re
-          data = json.load(open("/tmp/gen.json", encoding="utf-8"))
-          for item in data["results"]:
-              assert not re.search(r"\{[^{}]*\}", item["text"]), item["text"]
-              assert len(item["counter"]) >= 2, item
-          print("generate ok:", len(data["results"]))
-          PY
-
-      - name: CLI 冒烟（连招生成 + 结构校验）
-        run: |
-          python scripts/hat_generate.py --target "某博主" --combo CMB-01 --json --seed 3 > /tmp/combo.json
-          python - <<'PY'
-          import json, subprocess, sys
-          data = json.load(open("/tmp/combo.json", encoding="utf-8"))
-          assert data["mode"] == "combo", data.keys()
-          assert len(data["steps"]) == 3, data["steps"]
-          assert data["break_steps"], data
-          text = data["text"]
-          out = subprocess.run([sys.executable, "scripts/hat_scan.py", "--text", text, "--json"],
-                               capture_output=True, text=True, encoding="utf-8")
-          assert out.returncode == 0, out.stderr
-          scan = json.loads(out.stdout)
-          # 生成文本的用词未必落在正则覆盖内，所以这里只要求能被扫出东西；
-          # "示例自洽"由单元测试 test_combo_examples_are_detected 保证。
-          assert scan["summary"]["pattern_hits"] + scan["summary"]["hat_hits"] >= 1, scan["summary"]
-          print("combo ok:", text)
-          PY
-
-      - name: CLI 冒烟（改稿对比门禁）
-        run: |
-          python scripts/hat_diff.py \
-            --before-text "标准公知体，收钱的吧。" \
-            --after-text "这一段的样本有问题，结论我不认同。" \
-            --must-drop 10 --max-score 30
-
-      - name: CLI 冒烟（改稿对比必须能拦住恶化）
-        run: |
-          if python scripts/hat_diff.py \
-            --before-text "这个方案还行。" \
-            --after-text "收钱的吧，一看就是那路人，早晚遭报应。" \
-            --max-score 20; then
-            echo "门禁没拦住恶化，逻辑有问题"
-            exit 1
-          fi
-          echo "diff gate correctly blocked regression"
-
-      # 门禁数字直接贴到 run 页面，不用点开每一步才知道 55 顶帽子 / 47 条语料还在不在
-      - name: 门禁摘要
-        if: matrix.python == '3.12'
-        run: |
-          {
-            echo "### 门禁摘要（py3.12 代表）"
-            echo ""
-            echo '```'
-            python scripts/verify_data.py | tail -2
-            python scripts/corpus_check.py | tail -4
-            python scripts/wordcount.py | tail -3
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: cat gate.md >> "$GITHUB_STEP_SUMMARY"
