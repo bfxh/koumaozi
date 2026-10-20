@@ -20,7 +20,7 @@ import common  # noqa: E402
 import hat_generate  # noqa: E402
 
 SNAKE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-ID_REF_RE = re.compile(r"\b(HAT-F[1-8]-\d{2}|PAT-\d{2})\b")
+ID_REF_RE = re.compile(r"\b(HAT-F[1-8]-\d{2}|PAT-\d{2}|CMB-\d{2}|CRP-\d{2})\b")
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 
 
@@ -146,7 +146,96 @@ def check_patterns(report, family_counts):
     return seen
 
 
-def check_references(report, hat_ids, pattern_ids):
+def check_combos(report, hat_ids, pattern_ids):
+    data = common.load_combos()
+    if data.get("schema_version") != 1:
+        report.error("SCHEMA", "combos.json schema_version 必须为 1")
+    seen = set()
+    for combo in data.get("combos", []):
+        report.checked += 1
+        cid = combo.get("id", "")
+        if not common.COMBO_RE.match(cid):
+            report.error("CMB-ID", f"id 格式非法: {cid}")
+        if cid in seen:
+            report.error("CMB-ID", f"id 重复: {cid}")
+        seen.add(cid)
+
+        sequence = combo.get("sequence", [])
+        if len(sequence) < 2:
+            report.error("CMB-SEQ", f"{cid} 连招至少要有 2 环")
+        flat = []
+        for index, stage in enumerate(sequence, 1):
+            candidates = stage if isinstance(stage, list) else [stage]
+            if not candidates:
+                report.error("CMB-SEQ", f"{cid} 第 {index} 环候选为空")
+            for cand in candidates:
+                if cand not in hat_ids and cand not in pattern_ids:
+                    report.error("CMB-SEQ", f"{cid} 第 {index} 环引用了不存在的标识 {cand}")
+                flat.append(cand)
+
+        if not any(cand in pattern_ids for cand in flat):
+            report.error("CMB-SEQ", f"{cid} 全是帽子没有句式，连招必须至少含一个 PAT")
+        if combo.get("break_at") not in flat:
+            report.error("CMB-BREAK", f"{cid} 的 break_at 不在自身序列里: {combo.get('break_at')}")
+        if combo.get("seal_degree") not in (2, 3, 4):
+            report.error("CMB-SEAL", f"{cid} seal_degree 必须是 2/3/4")
+        if len(combo.get("break_steps", [])) < 2:
+            report.error("CMB-BREAK", f"{cid} 破解步骤少于 2 条")
+        for field in ("name", "scene", "example", "fail_mode"):
+            if not str(combo.get(field, "")).strip():
+                report.error("CMB-FIELD", f"{cid} 缺少 {field}")
+    return seen
+
+
+def check_corpus(report, hat_ids, pattern_ids):
+    data = common.load_corpus()
+    if data.get("schema_version") != 1:
+        report.error("SCHEMA", "corpus.json schema_version 必须为 1")
+    seen = set()
+    counts = {"attack": 0, "neutral": 0}
+    for case in data.get("cases", []):
+        report.checked += 1
+        cid = case.get("id", "")
+        if not common.CORPUS_RE.match(cid):
+            report.error("CRP-ID", f"id 格式非法: {cid}")
+        if cid in seen:
+            report.error("CRP-ID", f"id 重复: {cid}")
+        seen.add(cid)
+
+        kind = case.get("kind")
+        if kind not in counts:
+            report.error("CRP-KIND", f"{cid} kind 必须是 attack 或 neutral")
+        else:
+            counts[kind] += 1
+        if len(str(case.get("text", "")).strip()) < 8:
+            report.error("CRP-TEXT", f"{cid} 文本过短")
+
+        expect = case.get("expect") or {}
+        must_include = expect.get("must_include", [])
+        for need in must_include:
+            if need not in hat_ids and need not in pattern_ids:
+                report.error("CRP-EXPECT", f"{cid} 期望命中了不存在的标识 {need}")
+
+        if kind == "neutral":
+            if must_include:
+                report.error("CRP-EXPECT", f"{cid} 负样本不该有 must_include")
+            if expect.get("max_hits") != 0:
+                report.error("CRP-EXPECT", f"{cid} 负样本必须声明 max_hits=0")
+        elif kind == "attack" and not must_include:
+            report.error("CRP-EXPECT", f"{cid} 正样本必须声明 must_include")
+
+        band = expect.get("score_band", [0, 100])
+        if len(band) != 2 or band[0] > band[1]:
+            report.error("CRP-BAND", f"{cid} score_band 非法: {band}")
+
+    if counts["neutral"] < 4:
+        report.error("COVERAGE", f"负样本少于 4 条（实际 {counts['neutral']}）")
+    if counts["attack"] < 8:
+        report.error("COVERAGE", f"正样本少于 8 条（实际 {counts['attack']}）")
+    return seen
+
+
+def check_references(report, hat_ids, pattern_ids, combo_ids=(), corpus_ids=()):
     targets = ["SKILL.md", "README.md"]
     ref_dir = os.path.join(common.REPO_ROOT, "references")
     if os.path.isdir(ref_dir):
@@ -164,8 +253,12 @@ def check_references(report, hat_ids, pattern_ids):
             report.checked += 1
             if ref.startswith("HAT") and ref not in hat_ids:
                 report.error("REF-DANGLING", f"{rel} 引用了不存在的帽子 {ref}")
-            if ref.startswith("PAT") and ref not in pattern_ids:
+            elif ref.startswith("PAT") and ref not in pattern_ids:
                 report.error("REF-DANGLING", f"{rel} 引用了不存在的句式 {ref}")
+            elif ref.startswith("CMB") and ref not in combo_ids:
+                report.error("REF-DANGLING", f"{rel} 引用了不存在的连招 {ref}")
+            elif ref.startswith("CRP") and ref not in corpus_ids:
+                report.error("REF-DANGLING", f"{rel} 引用了不存在的语料 {ref}")
 
 
 def check_naming(report):
@@ -208,7 +301,9 @@ def main(argv=None):
     family_counts = check_hats(report)
     pattern_ids = check_patterns(report, family_counts)
     hat_ids = {hat["id"] for hat in common.load_hats()["hats"]}
-    check_references(report, hat_ids, pattern_ids)
+    combo_ids = check_combos(report, hat_ids, pattern_ids)
+    corpus_ids = check_corpus(report, hat_ids, pattern_ids)
+    check_references(report, hat_ids, pattern_ids, combo_ids, corpus_ids)
     check_naming(report)
 
     payload = {
@@ -216,6 +311,8 @@ def main(argv=None):
         "checked": report.checked,
         "hats": len(hat_ids),
         "patterns": len(pattern_ids),
+        "combos": len(combo_ids),
+        "corpus": len(corpus_ids),
         "families": len(family_counts),
         "errors": report.errors,
         "warnings": report.warnings,
@@ -224,7 +321,8 @@ def main(argv=None):
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(f"检查项 {report.checked}  |  帽子 {payload['hats']}  句式 {payload['patterns']}  家族 {payload['families']}")
+        print(f"检查项 {report.checked}  |  帽子 {payload['hats']}  句式 {payload['patterns']}  "
+              f"连招 {payload['combos']}  语料 {payload['corpus']}  家族 {payload['families']}")
         for item in report.errors:
             print(f"  ERROR [{item['code']}] {item['message']}")
         for item in report.warnings:

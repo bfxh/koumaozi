@@ -27,6 +27,15 @@ python3 scripts/hat_scan.py --text "这种公知体还用看？一条多少钱�
 # 扫整个目录，只报 Warning 以上
 python3 scripts/hat_scan.py --target notes/ --min-severity Warning
 
+# 整串连招（10 条固定连招，四向封死直接判 Critical）
+python3 scripts/hat_generate.py --target "某博主" --combo CMB-01 --seed 3
+
+# 改稿前后对比：分数升降、消除了什么、新增了什么
+python3 scripts/hat_diff.py --before draft-v1.md --after draft-v2.md
+
+# 回归语料门禁：正样本该抓必抓，负样本一个不许抓
+python3 scripts/corpus_check.py
+
 # 生成帽子文案（模板拼装，同 seed 同结果）
 python3 scripts/hat_generate.py --target "某科技博主" --family motive-contamination --count 5 --seed 7
 
@@ -46,17 +55,22 @@ koumaozi/
 ├── SKILL.md                          技能主干：四要素模型、双模工作流、反制三阶
 ├── data/
 │   ├── hats.json                     55 顶帽子（机器可读单一真源）
-│   └── patterns.json                 24 式攻击句式 + 生成模板
+│   ├── patterns.json                 24 式攻击句式 + 生成模板
+│   ├── combos.json                   10 条固定连招（候选集序列）
+│   └── corpus.json                   32 条回归语料（24 正 + 8 负）
 ├── references/
 │   ├── hats-catalog.md               帽子全解：55 顶 × 触发/投放/识别/破法/失效
 │   ├── rhetoric-patterns.md          24 式拆解：机理、变体、为什么有效、怎么拆
+│   ├── combos.md                     10 条连招：三种结构、逐条拆解、破法通则
 │   ├── counterplay.md                反制手册：三阶响应、场景剧本、六种失败模式
 │   ├── generation-playbook.md        生成手册：参数决策、强度控制、去 AI 味
 │   └── casebook.md                   六个案例复盘：原文 → 扫描 → 拆解 → 处置
 ├── scripts/
-│   ├── common.py                     数据加载、分句、编码兜底
-│   ├── hat_scan.py                   扫描器
-│   ├── hat_generate.py               生成器（可复现）
+│   ├── common.py                     数据加载、分句、角色判定、编码兜底
+│   ├── hat_scan.py                   扫描器（帽子 / 句式 / 连招 / 否认降级）
+│   ├── hat_generate.py               生成器（单条 + 连招，可复现）
+│   ├── hat_diff.py                   改稿对比（可当门禁）
+│   ├── corpus_check.py               回归语料门禁
 │   ├── verify_data.py                一致性门禁
 │   └── wordcount.py                  内容量门禁
 └── tests/test_koumaozi.py            门禁测试
@@ -80,6 +94,8 @@ koumaozi/
 八族：立场叛徒、智力贬损、动机污染、身份污名、群体威胁、专业越界、道德审判、时间政治。
 
 二十四式里，只有 `PAT-02`（动机归因）、`PAT-17`（语用预设）、`PAT-18`（沉默即认罪）是真正四向封死的。遇到这三式，不要讲理——对围观者拆结构，或者走。
+
+单式好拆，连招难拆：**拆掉一环，其余环仍在生效**。所以十条连招单独计分，`seal_degree >= 3` 直接判 Critical。连招破了三环全拆的念头，只拆最脆的一环——要求对方提供具体信息的那一环。
 
 ## 评分怎么读
 
@@ -117,16 +133,20 @@ AI 写的帽子 100% 有 AI 味，因为它倾向于把攻击写得"完整"—�
 
 ## 质量门禁
 
-CI 跑四道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
+CI 跑六道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
 
 | 门禁 | 内容 |
 |---|---|
-| `verify_data.py` | schema、家族覆盖、别名冲突、正则可编译、模板槽位有默认值、文档引用的 HAT/PAT 编号真实存在、脚本命名 snake_case、skill name 与目录名一致 |
+| `verify_data.py` | schema、家族覆盖、别名冲突、正则可编译、模板槽位有默认值、连招序列合法、语料期望合法、文档引用的 HAT/PAT/CMB/CRP 编号真实存在、命名规范 |
 | `wordcount.py --min 10000` | 中文内容量下限 |
-| `unittest` | 扫描器正例/负例、生成器无残留槽位、同 seed 可复现、评分单调性 |
+| `corpus_check.py` | 32 条回归语料：正样本该抓必抓、负样本一个不许抓 |
+| `unittest` | 扫描器正例/负例/否认降级、连招检测、生成器无残留槽位与同 seed 复现、diff 升降方向、评分单调性 |
 | `compileall` | 全脚本语法 |
+| CLI 冒烟 | 扫描、生成、连招生成、改稿对比各跑一遍真实命令 |
 
-门禁的意义不在通过，在于挡住"看着像有内容"的改动：加一顶帽子必须补反制要点，改模板必须保证槽位有默认值，写文档引用编号必须真实存在。
+门禁的意义不在通过，在于挡住"看着像有内容"的改动：加一顶帽子必须补反制要点，改模板必须保证槽位有默认值，写文档引用编号必须真实存在，动正则必须过回归语料。
+
+**回归语料是这套门禁里最有用的一个**：24 条正样本保证"该抓的抓到"，8 条负样本保证"不该抓的别抓"。第一次跑就有 4 条正样本漏检（"这不是境外势力是什么""收了多少公关费""什么时候才肯停止""先去读两本书"），全部补了正则才通过——这就是语料的价值，它逼工具兑现承诺。
 
 ## License
 
