@@ -192,7 +192,7 @@ def check_corpus(report, hat_ids, pattern_ids):
     if data.get("schema_version") != 1:
         report.error("SCHEMA", "corpus.json schema_version 必须为 1")
     seen = set()
-    counts = {"attack": 0, "neutral": 0}
+    counts = {"attack": 0, "neutral": 0, "context": 0}
     for case in data.get("cases", []):
         report.checked += 1
         cid = case.get("id", "")
@@ -204,7 +204,7 @@ def check_corpus(report, hat_ids, pattern_ids):
 
         kind = case.get("kind")
         if kind not in counts:
-            report.error("CRP-KIND", f"{cid} kind 必须是 attack 或 neutral")
+            report.error("CRP-KIND", f"{cid} kind 必须是 attack / neutral / context")
         else:
             counts[kind] += 1
         if len(str(case.get("text", "")).strip()) < 8:
@@ -221,6 +221,22 @@ def check_corpus(report, hat_ids, pattern_ids):
                 report.error("CRP-EXPECT", f"{cid} 负样本不该有 must_include")
             if expect.get("max_hits") != 0:
                 report.error("CRP-EXPECT", f"{cid} 负样本必须声明 max_hits=0")
+        elif kind == "context":
+            # 语境样本断言的是"字面有帽子、但语境不算"：
+            # 必须有 downgraded 指名是哪一顶被降级，否则它退化成一条普通负样本。
+            if must_include:
+                report.error("CRP-EXPECT", f"{cid} 语境样本不该有 must_include")
+            if expect.get("max_hits") != 0:
+                report.error("CRP-EXPECT", f"{cid} 语境样本必须声明 max_hits=0")
+            downgraded = expect.get("downgraded", [])
+            if not downgraded:
+                report.error("CRP-EXPECT", f"{cid} 语境样本必须声明 downgraded（哪一顶被降级）")
+            for need in downgraded:
+                if need not in hat_ids and need not in pattern_ids:
+                    report.error("CRP-EXPECT", f"{cid} downgraded 引用了不存在的标识 {need}")
+            if expect.get("min_raw", 0) < len(downgraded):
+                report.error("CRP-EXPECT",
+                             f"{cid} min_raw={expect.get('min_raw', 0)} 小于降级项数 {len(downgraded)}")
         elif kind == "attack" and not must_include:
             report.error("CRP-EXPECT", f"{cid} 正样本必须声明 must_include")
 
@@ -232,6 +248,9 @@ def check_corpus(report, hat_ids, pattern_ids):
         report.error("COVERAGE", f"负样本少于 4 条（实际 {counts['neutral']}）")
     if counts["attack"] < 8:
         report.error("COVERAGE", f"正样本少于 8 条（实际 {counts['attack']}）")
+    if counts["context"] < 6:
+        report.error("COVERAGE", f"语境样本少于 6 条（实际 {counts['context']}）："
+                                 "denied/quoted 降级没有语料背书")
     return seen
 
 

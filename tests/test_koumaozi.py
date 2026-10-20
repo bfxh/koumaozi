@@ -306,6 +306,7 @@ class TestCorpus(unittest.TestCase):
         kinds = Counter(case["kind"] for case in cases)
         self.assertGreaterEqual(kinds["neutral"], 8)
         self.assertGreaterEqual(kinds["attack"], 30)
+        self.assertGreaterEqual(kinds["context"], 6, "语境样本不足，denied/quoted 降级没有背书")
 
     def test_coverage_complete(self):
         cov = corpus_check.coverage()
@@ -332,6 +333,66 @@ class TestCorpus(unittest.TestCase):
             if row["kind"] == "neutral":
                 self.assertEqual(row["label_score"], 0, row)
                 self.assertEqual(row["ids"], [], row)
+
+
+class TestContextDowngrade(unittest.TestCase):
+    """语境样本：字面有帽子，但语境是引用或否认。
+
+    这类样本是这套工具最容易被骂"不能用"的地方。干净负样本证明不了它——
+    那些文本压根没触发词形，降级代码从头到尾没执行过。
+    """
+
+    def test_context_cases_have_raw_but_no_used(self):
+        for row in corpus_check.run():
+            if row["kind"] != "context":
+                continue
+            self.assertGreater(row["raw_hits"], 0, f"{row['id']} 没有触发任何词形，退化成负样本了")
+            self.assertEqual(row["ids"], [], f"{row['id']} 不该有有效命中: {row['ids']}")
+            self.assertEqual(row["label_score"], 0, row)
+
+    def test_both_roles_are_exercised(self):
+        cov = corpus_check.coverage()
+        for role in ("denied", "quoted"):
+            self.assertGreaterEqual(len(cov["roles"].get(role, [])), 2,
+                                    f"role={role} 没有足够语料，降级分支只走了一半")
+
+    def test_gate_fails_when_context_cases_disappear(self):
+        cov = corpus_check.coverage()
+        problems = corpus_check.coverage_problems(cov, min_context_cases=99)
+        self.assertTrue(problems, "语境样本门槛提到 99 条时必须报错")
+
+    def test_gate_fails_when_a_role_is_uncovered(self):
+        cov = corpus_check.coverage()
+        for role in ("denied", "quoted"):
+            cov["roles"][role] = []
+        problems = corpus_check.coverage_problems(cov)
+        self.assertTrue(any("denied" in p for p in problems), problems)
+        self.assertTrue(any("quoted" in p for p in problems), problems)
+
+    def test_downgraded_expectation_is_enforced(self):
+        """把"必须被降级"指到一个根本没出现的标识上，evaluate 必须报错。
+
+        这条防的是语境样本退化成"反正没命中就算过"。
+        """
+        case = {
+            "id": "FAKE-01",
+            "kind": "context",
+            "text": "我没有收钱。",
+            "expect": {"max_hits": 0, "min_raw": 1, "downgraded": ["PAT-99"],
+                       "score_band": [0, 0]},
+        }
+        findings = [{"pattern_id": "HAT-F3-02", "role": "denied", "severity": "Info",
+                     "intensity": 3, "amplifiers": [], "family": "motive-contamination"}]
+        row = corpus_check.evaluate(case, findings, 6)
+        self.assertFalse(row["passed"])
+        self.assertTrue(any("PAT-99" in p for p in row["problems"]), row["problems"])
+
+    def test_denial_of_hat_is_not_an_attack(self):
+        """"我没有收钱"是最致命的误报来源，单独立一条，防止以后改正则改坏。"""
+        compiled = hat_scan.compile_patterns()
+        findings, _ = hat_scan.scan_text("<denial>", "我没有收钱，也没替谁说话。", compiled)
+        self.assertTrue(findings, "词形应该命中，否则这条测不到降级")
+        self.assertFalse([f for f in findings if f.get("role") == "used"], findings)
 
 
 class TestPerformance(unittest.TestCase):
