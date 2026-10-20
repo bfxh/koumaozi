@@ -17,6 +17,7 @@
     score: document.getElementById("score"),
     bar: document.getElementById("bar"),
     verdict: document.getElementById("verdict"),
+    downgrade: document.getElementById("downgrade"),
     counts: document.getElementById("counts"),
     markup: document.getElementById("markup"),
     findings: document.getElementById("findings")
@@ -73,23 +74,6 @@
   }
 
   /* ---- 渲染 ---- */
-
-  function renderCounts(stats) {
-    clearChildren(els.counts);
-    var pairs = [
-      ["帽子", stats.hat_hits],
-      ["句式", stats.pattern_hits],
-      ["连招", stats.combo_hits],
-      ["Critical", stats.critical_hits],
-      ["每千字帽子", stats.hat_per_kilo],
-      ["字数", stats.chars]
-    ];
-    pairs.forEach(function (pair) {
-      var li = document.createElement("li");
-      li.textContent = pair[0] + " " + pair[1];
-      els.counts.appendChild(li);
-    });
-  }
 
   function ranges(findings) {
     // 只标帽子与句式：连招是它们的组合，单独标会和成员重复
@@ -220,10 +204,38 @@
     els.verdict.textContent = hasText
       ? stats.verdict
       : "还没有输入。";
-    renderCounts(hasText ? stats : {
-      hat_hits: 0, pattern_hits: 0, combo_hits: 0, critical_hits: 0,
-      hat_per_kilo: 0, chars: 0
+  }
+
+  function renderCounts(stats) {
+    clearChildren(els.counts);
+    var pairs = [
+      ["帽子", stats.hat_hits],
+      ["句式", stats.pattern_hits],
+      ["连招", stats.combo_hits],
+      ["Critical", stats.critical_hits],
+      ["每千字帽子", stats.hat_per_kilo],
+      ["字数", stats.chars]
+    ];
+    pairs.forEach(function (pair) {
+      var li = document.createElement("li");
+      li.textContent = pair[0] + " " + pair[1];
+      els.counts.appendChild(li);
     });
+  }
+
+  /** 主分数只算"正在使用"的命中，被引用 / 被否认的不算。
+   *
+   *  这个口径和回归语料一致：把"他在评论区说我收了钱"判成 51 分中度标签化，
+   *  等于告诉用户"你这段在扣帽子"，而事实是他在转述别人的指控。
+   *  含这些的总分仍然照命令行那边的算法给出，放在下面一行对照，两边都不藏。
+   */
+  function renderDowngrade(downgraded, totalStats, chars) {
+    if (!downgraded.length) {
+      els.downgrade.textContent = "";
+      return;
+    }
+    els.downgrade.innerHTML = "另有 <b>" + downgraded.length + "</b> 处被引用 / 被否认（已降级，不计入）" +
+      " · 含这些一共 <b>" + totalStats.label_score + "</b> 分（" + chars + " 字）";
   }
 
   /* ---- 主流程 ---- */
@@ -236,14 +248,26 @@
     var hasText = text.trim().length > 0;
 
     if (!hasText) {
-      setScore(null, false);
+      setScore({ label_score: 0, verdict: "还没有输入。" }, false);
+      renderDowngrade([], null, 0);
+      renderCounts({ hat_hits: 0, pattern_hits: 0, combo_hits: 0, critical_hits: 0,
+                     hat_per_kilo: 0, chars: 0 });
       renderMarkup("", []);
       renderFindings([]);
       return;
     }
 
     var result = SCAN.scan(text);
-    setScore(result.stats, true);
+    // 主分数只算"正在使用"的命中；被引用/被否认的单独列出来，并给出含它们的总分
+    var usedOnly = result.findings.filter(function (item) { return item.role === "used"; });
+    var downgraded = result.findings.filter(function (item) {
+      return item.kind !== "combo" && item.role !== "used";
+    });
+    var usedStats = SCAN.score(usedOnly, result.chars);
+
+    setScore(usedStats, true);
+    renderCounts(result.stats);
+    renderDowngrade(downgraded, result.stats, result.chars);
     renderMarkup(text, result.findings);
     renderFindings(result.findings);
   }

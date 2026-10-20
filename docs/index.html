@@ -94,8 +94,12 @@
 
   .score { display: flex; align-items: baseline; gap: 12px; }
   .score b { font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
-  .score span { font-size: 12px; color: var(--ink-faint); }
+  .score span { font-size: 12px; color: var(--ink-faint); display: block; line-height: 1.4; }
+  .score span small { display: block; font-size: 11px; color: var(--ink-faint); opacity: .85; }
   .verdict { margin-top: 8px; font-size: 14px; color: var(--ink-soft); }
+  /* 被引用/被否认的命中已降级，但对"这段文本自己在扣吗"这个问法，它们不该占分 */
+  .downgrade { margin-top: 6px; font-size: 13px; color: var(--ink-faint); }
+  .downgrade b { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .counts { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 14px 0 0; }
   .counts li { font-size: 12px; font-family: var(--mono); padding: 3px 8px; border-radius: 6px; background: var(--muted-soft); color: var(--ink-soft); }
   .bar { height: 4px; border-radius: 2px; background: var(--muted-soft); overflow: hidden; margin-top: 14px; }
@@ -160,10 +164,11 @@
       <h2>结果</h2>
       <div class="score">
         <b id="score">—</b>
-        <span>标签分 / 100</span>
+        <span>标签分 / 100<small>只看正在使用（转述、否认不算）</small></span>
       </div>
       <div class="bar"><i id="bar"></i></div>
       <div class="verdict" id="verdict">还没有输入。</div>
+      <div class="downgrade" id="downgrade"></div>
       <ul class="counts" id="counts"></ul>
     </section>
   </div>
