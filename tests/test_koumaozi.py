@@ -18,6 +18,7 @@ sys.path.insert(0, SCRIPTS)
 import common  # noqa: E402
 import corpus_check  # noqa: E402
 import doc_smoke  # noqa: E402
+import gate  # noqa: E402
 import hat_diff  # noqa: E402
 import hat_generate  # noqa: E402
 import hat_scan  # noqa: E402
@@ -705,6 +706,43 @@ class TestDocSmoke(unittest.TestCase):
         row = doc_smoke.run_case(case)
         self.assertFalse(row["passed"])
 
+    def test_recursive_gate_commands_are_skipped(self):
+        """文档里写 `python3 scripts/gate.py` 会 gate → docs → doc_smoke → gate。"""
+        self.assertIsNotNone(doc_smoke.skip_reason("python3 scripts/gate.py"))
+        self.assertIsNotNone(doc_smoke.skip_reason("python3 scripts/gate.py --tier core"))
+        # 只打印元信息的子命令不跑门禁，没有递归风险，必须照跑
+        self.assertIsNone(doc_smoke.skip_reason("python3 scripts/gate.py --list"))
+        self.assertIsNone(doc_smoke.skip_reason("python3 scripts/gate.py --explain"))
+        self.assertIsNone(doc_smoke.skip_reason("python3 scripts/hat_scan.py --text x"))
+
+    def test_no_command_really_recurses(self):
+        """跳过的一定都是 gate.py；没跳过而调 gate.py 的，只能是 --list / --explain。"""
+        for case in doc_smoke.collect():
+            if case.get("skip"):
+                self.assertIn("scripts/gate.py", case["command"])
+            elif "scripts/gate.py" in case["command"]:
+                self.assertTrue("--list" in case["command"] or "--explain" in case["command"],
+                                f"这条会递归却要真跑: {case['command']}")
+
+    def test_skip_switch_targets_the_heavy_test(self):
+        """跳过开关必须挂在"真跑 33 条文档命令"那条上。
+
+        这条测试是被一次真实的错位逼出来的：加新测试时 skipIf 被挤到了
+        隔壁函数上，于是 11 秒照跑、还显示 skipped=1，看起来一切正常。
+
+        只点名那一条测试方法，不能点名整个类——这个类里有本条测试自己，
+        整类跑会无限级联出子进程。
+        """
+        env = dict(os.environ, KOUMAOZI_SKIP_DOC_SMOKE="1")
+        target = "tests.test_koumaozi.TestDocSmoke.test_every_doc_command_runs"
+        proc = subprocess.run([sys.executable, "-m", "unittest", target],
+                              cwd=REPO_ROOT, env=env, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertIn("skipped=1", proc.stderr,
+                      f"KOUMAOZI_SKIP_DOC_SMOKE=1 时这条应当被跳过: {proc.stderr[-300:]}")
+
+    @unittest.skipIf(os.environ.get("KOUMAOZI_SKIP_DOC_SMOKE"),
+                     "由 gate.py 的 docs 门禁单独覆盖，这里跳过省 11s")
     def test_every_doc_command_runs(self):
         """真跑一遍。慢一点（几条子进程），但这是这道门禁的全部意义。"""
         rows = doc_smoke.run()
@@ -744,6 +782,91 @@ class TestDiffInput(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("文件不存在", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+
+class TestGate(unittest.TestCase):
+    """统一门禁入口：本地和 CI 必须跑同一套。
+
+    门禁散在 workflow 里最容易出现"本地绿、CI 红"——两边顺序和集合各写一份，
+    改了一边忘另一边。所以这里连"CI 是否走 gate.py"都要断言。
+    """
+
+    def test_core_is_subset_of_all(self):
+        core = {gate["key"] for gate in gate.select("core")}
+        everything = {gate["key"] for gate in gate.select("all")}
+        self.assertTrue(core <= everything)
+        self.assertEqual(core | {"docs", "cli", "package"}, everything)
+
+    def test_select_only(self):
+        picked = gate.select(only="data,corpus")
+        self.assertEqual([item["key"] for item in picked], ["data", "corpus"])
+
+    def test_unknown_key_raises(self):
+        with self.assertRaises(SystemExit):
+            gate.select(only="data,nope")
+
+    def test_every_gate_script_exists(self):
+        for item in gate.GATES:
+            argv = item["argv"]
+            if "-m" in argv[:3]:
+                continue
+            script = argv[1] if argv[0] == sys.executable else argv[0]
+            if script.endswith(".py"):
+                self.assertTrue(os.path.isfile(script), f"{item['key']} 指向不存在的脚本: {script}")
+
+    def test_failure_is_reported(self):
+        fake = {"key": "fake", "name": "假门禁", "tier": "core",
+                "argv": [sys.executable, "-c",
+                         "import sys; sys.stderr.write('boom 出错原因'); sys.exit(3)"],
+                "protects": "", "hint": ""}
+        row = gate.run_gate(fake)
+        self.assertFalse(row["passed"])
+        self.assertEqual(row["returns"], 3)
+        self.assertTrue(any("boom" in line for line in row["problems"]), row["problems"])
+
+    def test_summarize_prefers_test_count(self):
+        text = "自检 koumaozi-1.0.0.zip  10 个文件\nRan 81 tests in 5.2s\nOK"
+        self.assertEqual(gate.summarize(text), "Ran 81 tests")
+
+    def test_workflows_go_through_single_entry(self):
+        """ci.yml 和 release.yml 都必须走 gate.py。
+
+        门禁集合一旦在 yml 里再写一遍，改 gate.py 时就会漏掉某一边，
+        然后出现"本地绿、CI 绿、发版红"这种最难查的组合。
+        """
+        for name in ("ci.yml", "release.yml"):
+            path = os.path.join(REPO_ROOT, ".github", "workflows", name)
+            self.assertTrue(os.path.isfile(path), f"缺 workflow: {name}")
+            with open(path, "r", encoding="utf-8") as fh:
+                workflow = fh.read()
+            self.assertIn("scripts/gate.py", workflow,
+                          f"{name} 没走 gate.py，门禁集合会从两处漂开")
+            for script in ("verify_data.py", "corpus_check.py", "doc_smoke.py",
+                           "cli_smoke.py", "package.py", "wordcount.py"):
+                self.assertNotIn(f"python scripts/{script}", workflow,
+                                 f"{name} 里还在直接调 {script}，应当统一走 gate.py")
+
+    def test_markdown_table_is_written(self):
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="koumaozi-test-md-")
+        try:
+            path = os.path.join(tmp, "gate.md")
+            rows = [
+                {"key": "data", "name": "数据一致性", "passed": True,
+                 "seconds": 0.2, "detail": "检查项 314"},
+                {"key": "corpus", "name": "回归语料", "passed": False,
+                 "seconds": 0.3, "detail": "有 1 条不符"},
+            ]
+            gate.write_markdown(path, "9.9.9", rows, 0.5)
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertIn("v9.9.9", text)
+            self.assertIn("| `data` 数据一致性 | ✅ |", text)
+            self.assertIn("| `corpus` 回归语料 | ❌ |", text)
+            self.assertIn("失败 1 道", text)
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

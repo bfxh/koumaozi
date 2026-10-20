@@ -37,6 +37,19 @@ DOCS = ["README.md", "SKILL.md"]
 FENCE_RE = re.compile(r"```[a-zA-Z0-9]*\n(.*?)```", re.S)
 CMD_PREFIXES = ("python3 scripts/", "python scripts/")
 SKIP_MARK = "doc-smoke: skip"
+
+
+def skip_reason(command):
+    """gate.py 会回头跑 docs 门禁，直接执行文档里的 gate 命令就是无限递归。
+
+    但 --list / --explain 只打印元信息、不跑门禁，没有递归风险，照跑。
+    """
+    if "scripts/gate.py" not in command:
+        return None
+    if "--list" in command or "--explain" in command:
+        return None
+    return "会递归（gate.py 的 docs 门禁会回来跑 doc_smoke）"
+
 # 需要生成产物才存在的路径：跑之前先建好，否则是环境问题不是文档问题
 DIST_RE = re.compile(r"\bdist/\S+")
 
@@ -78,10 +91,13 @@ def extract(path):
             buffer = ""
             if SKIP_MARK in command:
                 continue
+            cleaned = strip_comment(command)
+            skip = skip_reason(cleaned)
             found.append({
                 "source": f"{rel}:{line_offset + index + 1}",
-                "command": strip_comment(command),
+                "command": cleaned,
                 "raw": command,
+                "skip": skip,
             })
     return found
 
@@ -122,6 +138,9 @@ def to_argv(command, root=None):
 def run_case(case, root=None):
     root = root or common.REPO_ROOT
     result = {"source": case["source"], "command": case["command"]}
+    if case.get("skip"):
+        result.update({"problems": [], "passed": True, "skipped": case["skip"]})
+        return result
     try:
         argv = to_argv(case["command"], root)
     except FileNotFoundError as exc:
@@ -207,7 +226,12 @@ def main(argv=None):
                          ensure_ascii=False, indent=2))
         return 0 if not failed else 1
 
-    print(f"文档命令 {len(rows)} 条  |  通过 {len(rows) - len(failed)}")
+    skipped = [row for row in rows if row.get("skipped")]
+    ran = len(rows) - len(skipped)
+    line = f"文档命令 {len(rows)} 条  |  跑 {ran}  通过 {ran - len(failed)}"
+    if skipped:
+        line += f"  跳过 {len(skipped)}（{skipped[0]['skipped']}）"
+    print(line)
     print("-" * 66)
     for row in rows:
         if row["passed"] and not args.verbose:
