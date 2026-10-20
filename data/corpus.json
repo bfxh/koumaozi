@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "回归语料。文本为改写构造的样本，不是任何真实人物的发言；不含个人信息。正样本验证'该抓的抓到'，负样本验证'不该抓的别抓'，同时承担数据覆盖职责：每个句式、每条连招、每个家族都必须至少被一条语料或连招示例覆盖。must_include 用子集语义，允许额外命中，避免正则微调就炸测试。",
+  "note": "回归语料。文本为改写构造的样本，不是任何真实人物的发言；不含个人信息。正样本验证'该抓的抓到'，负样本验证'不该抓的别抓'，语境样本验证'有帽子字样但语境是引用/否认时不抓'，同时承担数据覆盖职责：每个句式、每条连招、每个家族都必须至少被一条语料或连招示例覆盖。must_include 用子集语义，允许额外命中，避免正则微调就炸测试。",
   "cases": [
     {
       "id": "CRP-01",
@@ -748,6 +748,160 @@
         "score_band": [
           20,
           100
+        ]
+      }
+    },
+    {
+      "id": "CRP-48",
+      "kind": "context",
+      "family": "",
+      "text": "他在评论区说我收了钱、说我是公知，我只回了一句让他拿证据。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 2,
+        "downgraded": [
+          "HAT-F1-01",
+          "PAT-02"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-49",
+      "kind": "context",
+      "family": "",
+      "text": "我没有收钱，也没有替谁站台，这套说法省省。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "HAT-F3-02"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-50",
+      "kind": "context",
+      "family": "",
+      "text": "这篇文档讨论的是“公知”“带节奏”这类词怎么起作用，不是教人骂街。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 2,
+        "downgraded": [
+          "HAT-F1-01",
+          "HAT-F3-01"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-51",
+      "kind": "context",
+      "family": "",
+      "text": "对方骂我是境外势力，我截图留了证。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "HAT-F1-05"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-52",
+      "kind": "context",
+      "family": "",
+      "text": "我不是公知，我只是不同意你的结论。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "HAT-F1-01"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-53",
+      "kind": "context",
+      "family": "",
+      "text": "他引用了那句“先去读两本书”，然后逐条反驳。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "PAT-07"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-54",
+      "kind": "context",
+      "family": "",
+      "text": "“早晚会遭报应”这种话我从来不说。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "PAT-24"
+        ],
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-55",
+      "kind": "context",
+      "family": "",
+      "text": "会议记录里写着：有同事质疑对方收钱，但没给出任何凭据。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "min_raw": 1,
+        "downgraded": [
+          "HAT-F3-02"
+        ],
+        "score_band": [
+          0,
+          0
         ]
       }
     }

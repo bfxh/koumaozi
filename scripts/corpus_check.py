@@ -21,9 +21,15 @@ DEFAULT_BAND = [0, 100]
 
 
 def evaluate(case, findings, chars):
-    """只看 role=used 的命中。否认句（我没有收钱）和被引用（他说我是公知）不算攻击。"""
+    """只看 role=used 的命中。否认句（我没有收钱）和被引用（他说我是公知）不算攻击。
+
+    kind=context 的样本断言的是"字面有帽子，但语境不算"：
+    要求 raw（含降级）达到 min_raw，而 used 必须是 0。
+    光有负样本（干净文本）证明不了降级逻辑，因为负样本压根没触发过词形。
+    """
     attack = [f for f in findings if f.get("role", "used") == "used"]
     ids = [f["pattern_id"] for f in attack]
+    raw = len(findings)
     stats = hat_scan.score(attack, chars)
     expect = case.get("expect", {})
     problems = []
@@ -42,6 +48,18 @@ def evaluate(case, findings, chars):
     if max_hits is not None and len(ids) > max_hits:
         problems.append(f"命中 {len(ids)} 处 > 上限 {max_hits}")
 
+    min_raw = expect.get("min_raw", 0)
+    if raw < min_raw:
+        problems.append(f"原文词形命中 {raw} 处 < 下限 {min_raw}（预期有帽子字样但被判降级）")
+
+    # 比 min_raw 更硬：必须是指定的那一顶被降级，而不是"恰好别的帽子没触发"
+    downgraded_seen = {f["pattern_id"]: f.get("role", "used")
+                       for f in findings if f.get("role", "used") != "used"}
+    for need in expect.get("downgraded", []):
+        if need not in downgraded_seen:
+            fallback = "（它被判成了 used，降级没生效）" if need in ids else ""
+            problems.append(f"{need} 应该被判 denied/quoted 却没进降级集{fallback}")
+
     low, high = expect.get("score_band", DEFAULT_BAND)
     score = stats["label_score"]
     if not low <= score <= high:
@@ -51,7 +69,9 @@ def evaluate(case, findings, chars):
         "id": case["id"],
         "kind": case.get("kind", ""),
         "characters": chars,
+        "raw_hits": raw,
         "ids": sorted(set(ids)),
+        "roles": sorted({f.get("role", "used") for f in findings}),
         "label_score": score,
         "problems": problems,
         "passed": not problems,
@@ -78,10 +98,14 @@ def coverage(rows=None):
     rows = run() if rows is None else rows
     pat_strong, fam_strong, hat_strong, cmb_strong = {}, {}, {}, {}
     fam_of = {hat["id"]: hat["family"] for hat in common.flatten_hats()}
+    kind_counts, role_cases = {}, {}
 
     for row in rows:
         if not row["passed"]:
             continue
+        kind_counts[row["kind"]] = kind_counts.get(row["kind"], 0) + 1
+        for role in row.get("roles", []):
+            role_cases.setdefault(role, set()).add(row["id"])
         for pid in row["ids"]:
             if pid.startswith("PAT"):
                 pat_strong.setdefault(pid, set()).add(row["id"])
@@ -114,6 +138,8 @@ def coverage(rows=None):
         "combos": {cid: sorted(cmb_strong.get(cid, set()) | cmb_weak.get(cid, set()))
                    for cid in [c["id"] for c in common.load_combos()["combos"]]},
         "hats_uncovered": sorted(h["id"] for h in common.flatten_hats() if h["id"] not in hat_strong),
+        "kinds": kind_counts,
+        "roles": {k: sorted(v) for k, v in role_cases.items()},
         "totals": {
             "patterns": len(common.load_patterns()["patterns"]),
             "families": len(common.family_map()),
@@ -123,7 +149,8 @@ def coverage(rows=None):
     }
 
 
-def coverage_problems(cov, min_family_cases=2, min_family_hats=2):
+def coverage_problems(cov, min_family_cases=2, min_family_hats=2,
+                      min_context_cases=6, min_role_cases=2):
     """覆盖门禁：漏掉任何一式，说明"这一式到底能不能被识别"没有证据。"""
     problems = []
     for pid, sources in cov["patterns"].items():
@@ -143,6 +170,17 @@ def coverage_problems(cov, min_family_cases=2, min_family_hats=2):
         hit_hats = {hid for hid in hats if hid in cov["hats"]}
         if len(hit_hats) < min_family_hats:
             problems.append(f"家族 {family} 只覆盖 {len(hit_hats)} 顶帽子，要求 ≥{min_family_hats}")
+
+    # 降级逻辑（denied / quoted）必须有语料背书。
+    # 干净负样本证明不了它——那些样本压根没触发词形，降级代码从头到尾没执行过。
+    context_cases = cov.get("kinds", {}).get("context", 0)
+    if context_cases < min_context_cases:
+        problems.append(f"语境样本只有 {context_cases} 条，要求 ≥{min_context_cases}"
+                        "（缺了它，denied/quoted 降级等于没被验证）")
+    for role in ("denied", "quoted"):
+        hit = cov.get("roles", {}).get(role, [])
+        if len(hit) < min_role_cases:
+            problems.append(f"role={role} 的语料只有 {len(hit)} 条，要求 ≥{min_role_cases}")
     return problems
 
 
@@ -161,6 +199,7 @@ def main(argv=None):
     failed = [r for r in rows if not r["passed"]]
     attack = [r for r in rows if r["kind"] == "attack"]
     neutral = [r for r in rows if r["kind"] == "neutral"]
+    context = [r for r in rows if r["kind"] == "context"]
 
     cov = coverage(rows)
     cov_problems = [] if args.no_coverage else coverage_problems(
@@ -173,6 +212,7 @@ def main(argv=None):
         "failed": len(failed),
         "attack_pass": f"{sum(1 for r in attack if r['passed'])}/{len(attack)}",
         "neutral_pass": f"{sum(1 for r in neutral if r['passed'])}/{len(neutral)}",
+        "context_pass": f"{sum(1 for r in context if r['passed'])}/{len(context)}",
         "coverage": {
             "patterns_covered": sum(1 for v in cov["patterns"].values() if v),
             "patterns_total": cov["totals"]["patterns"],
@@ -192,12 +232,14 @@ def main(argv=None):
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if not failed and not cov_problems else 1
 
-    print(f"语料 {len(rows)} 条  |  正样本 {payload['attack_pass']}  负样本 {payload['neutral_pass']}")
+    print(f"语料 {len(rows)} 条  |  正样本 {payload['attack_pass']}  "
+          f"负样本 {payload['neutral_pass']}  语境样本 {payload['context_pass']}")
     print("-" * 66)
     for row in rows:
         mark = "PASS" if row["passed"] else "FAIL"
         ids = ",".join(row["ids"]) if row["ids"] else "-"
-        print(f"{mark}  {row['id']}  {row['label_score']:>3}分  {ids}")
+        raw = f" raw={row['raw_hits']}" if row.get("raw_hits") else ""
+        print(f"{mark}  {row['id']}  {row['label_score']:>3}分  {ids}{raw}")
         if args.verbose or not row["passed"]:
             for problem in row["problems"]:
                 print(f"      × {problem}")
