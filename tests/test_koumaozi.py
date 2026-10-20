@@ -9,12 +9,15 @@ import re
 import subprocess
 import sys
 import unittest
+from collections import Counter
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO_ROOT, "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import common  # noqa: E402
+import corpus_check  # noqa: E402
+import hat_diff  # noqa: E402
 import hat_generate  # noqa: E402
 import hat_scan  # noqa: E402
 import verify_data  # noqa: E402
@@ -43,6 +46,29 @@ class TestData(unittest.TestCase):
         for hat in common.flatten_hats():
             self.assertGreaterEqual(len(hat["counter"]), 2, hat["id"])
             self.assertGreaterEqual(len(hat["signal"]), 2, hat["id"])
+
+    def test_combo_count(self):
+        self.assertEqual(len(common.load_combos()["combos"]), 10)
+
+    def test_combo_examples_are_detected(self):
+        """数据自洽：每条连招自己写的 example，必须能被自己的检测器识别出来。
+
+        这条比"生成器产出能被回扫"更可靠——生成器随机挑模板，用词未必落在
+        正则覆盖内；而 example 是写死的，它认不出自己就等于数据说谎。
+        """
+        patterns = hat_scan.compile_patterns()
+        for combo in common.load_combos()["combos"]:
+            findings, _ = hat_scan.scan_text("<example>", combo["example"], patterns)
+            ids = [f["pattern_id"] for f in findings]
+            self.assertIn(combo["id"], ids, f"{combo['id']} 的 example 自己认不出来: {ids}")
+
+    def test_combo_break_at_in_sequence(self):
+        for combo in common.load_combos()["combos"]:
+            flat = []
+            for stage in combo["sequence"]:
+                flat.extend(stage if isinstance(stage, list) else [stage])
+            self.assertIn(combo["break_at"], flat, combo["id"])
+            self.assertGreaterEqual(len(combo["break_steps"]), 2, combo["id"])
 
 
 class TestScanner(unittest.TestCase):
@@ -90,6 +116,44 @@ class TestScanner(unittest.TestCase):
             stats = hat_scan.score(findings, chars)
             self.assertGreaterEqual(stats["label_score"], 0)
             self.assertLessEqual(stats["label_score"], 100)
+
+    def test_role_denied(self):
+        findings, _ = self.scan("我没有收钱。")
+        self.assertTrue(findings)
+        self.assertEqual(findings[0]["role"], "denied")
+        self.assertEqual(findings[0]["severity"], "Info")
+
+    def test_role_quoted(self):
+        findings, _ = self.scan("他说我是公知。")
+        self.assertTrue(findings)
+        self.assertEqual(findings[0]["role"], "quoted")
+        self.assertEqual(findings[0]["severity"], "Info")
+
+    def test_rhetorical_question_is_used(self):
+        # "这不是 X 是什么？" 是反问式定性，不能判成否认
+        findings, _ = self.scan("这不是境外势力是什么？")
+        self.assertTrue(findings)
+        self.assertEqual(findings[0]["role"], "used")
+
+    def test_combo_detected(self):
+        text = "收钱的吧，一看就是那路人，早晚遭报应。"
+        findings, _ = self.scan(text)
+        combos = [f for f in findings if f["kind"] == "combo"]
+        self.assertEqual(len(combos), 1, findings)
+        self.assertEqual(combos[0]["pattern_id"], "CMB-01")
+        self.assertEqual(combos[0]["severity"], "Critical")
+        self.assertEqual(combos[0]["members"][0], "HAT-F3-02")
+
+    def test_combo_not_triggered_by_single_stage(self):
+        findings, _ = self.scan("收钱的吧。")
+        self.assertFalse([f for f in findings if f["kind"] == "combo"])
+
+    def test_combo_window_respected(self):
+        text = "收钱的吧。" + "填充" * 200 + "。一看就是那路人。早晚遭报应。"
+        tight, _ = self.scan(text, strip_code=True)
+        loose = hat_scan.scan_text("<t>", text, self.patterns, window=5000)[0]
+        self.assertFalse([f for f in tight if f["kind"] == "combo"])
+        self.assertTrue([f for f in loose if f["kind"] == "combo"])
 
     def test_cli_json(self):
         result = subprocess.run(
@@ -146,6 +210,108 @@ class TestGenerator(unittest.TestCase):
     def test_unknown_hat_fails(self):
         with self.assertRaises(SystemExit):
             hat_generate.main(["--target", "x", "--hat", "不存在的帽子"])
+
+
+class TestComboGenerate(unittest.TestCase):
+    def capture(self, argv):
+        import io
+        from contextlib import redirect_stdout
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = hat_generate.main(argv)
+        return code, buffer.getvalue()
+
+    def test_all_combos_generate(self):
+        for combo in common.load_combos()["combos"]:
+            code, out = self.capture(["--target", "某博主", "--combo", combo["id"],
+                                      "--json", "--seed", "1"])
+            self.assertEqual(code, 0, combo["id"])
+            payload = json.loads(out)
+            self.assertEqual(payload["mode"], "combo")
+            self.assertEqual(len(payload["steps"]), len(combo["sequence"]), combo["id"])
+            self.assertNotRegex(payload["text"], r"\{[^{}]*\}", combo["id"])
+
+    def test_combo_break_info_present(self):
+        _, out = self.capture(["--target", "某人", "--combo", "CMB-10", "--json", "--seed", "2"])
+        payload = json.loads(out)
+        self.assertEqual(payload["break_at"], "PAT-17")
+        self.assertGreaterEqual(len(payload["break_steps"]), 2)
+        self.assertTrue(payload["fail_mode"])
+
+    def test_combo_punctuation(self):
+        _, out = self.capture(["--target", "某人", "--combo", "CMB-01", "--json", "--seed", "3"])
+        text = json.loads(out)["text"]
+        self.assertNotIn("？。", text)
+        self.assertTrue(text.endswith(("。", "？", "！")))
+
+    def test_combo_reproducible(self):
+        _, a = self.capture(["--target", "某人", "--combo", "CMB-03", "--json", "--seed", "9"])
+        _, b = self.capture(["--target", "某人", "--combo", "CMB-03", "--json", "--seed", "9"])
+        self.assertEqual(json.loads(a)["text"], json.loads(b)["text"])
+
+    def test_unknown_combo_fails(self):
+        with self.assertRaises(SystemExit):
+            hat_generate.main(["--target", "x", "--combo", "CMB-99"])
+
+
+class TestDiff(unittest.TestCase):
+    def run_diff(self, before, after, *extra):
+        import io
+        from contextlib import redirect_stdout
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = hat_diff.main(["--before-text", before, "--after-text", after, "--json", *extra])
+        return code, json.loads(buffer.getvalue())
+
+    def test_improvement_direction(self):
+        code, data = self.run_diff(
+            "我没有收钱。我做这个号三年了，所有推荐都是自费买的。",
+            "证据呢？没有的话，这句就是从你嘴里出来的。")
+        self.assertEqual(code, 0)
+        self.assertLessEqual(data["verdict"]["delta"], 0)
+        self.assertIn("HAT-F3-02", {item["id"] for item in data["removed"]})
+
+    def test_deterioration_detects_combo(self):
+        code, data = self.run_diff("这个方案还行。", "收钱的吧，一看就是那路人，早晚遭报应。")
+        self.assertGreater(data["verdict"]["delta"], 0)
+        self.assertIn("CMB-01", {item["id"] for item in data["added"]})
+
+    def test_gate_must_drop_fails(self):
+        code, data = self.run_diff("这个方案还行。", "收钱的吧。", "--must-drop", "50")
+        self.assertEqual(code, 1)
+        self.assertFalse(data["passed"])
+
+    def test_gate_max_score_fails(self):
+        code, _ = self.run_diff("这个方案还行。",
+                                "收钱的吧，一看就是那路人，早晚遭报应。",
+                                "--max-score", "20")
+        self.assertEqual(code, 1)
+
+    def test_gate_pass(self):
+        code, data = self.run_diff(
+            "标准公知体，收钱的吧。",
+            "你这个结论我不同意，具体是第二段的样本有问题。",
+            "--must-drop", "10", "--max-score", "30")
+        self.assertEqual(code, 0, data["gates"])
+
+
+class TestCorpus(unittest.TestCase):
+    def test_corpus_all_pass(self):
+        rows = corpus_check.run()
+        failed = [r for r in rows if not r["passed"]]
+        self.assertFalse(failed, failed)
+
+    def test_corpus_composition(self):
+        cases = common.load_corpus()["cases"]
+        kinds = Counter(case["kind"] for case in cases)
+        self.assertGreaterEqual(kinds["neutral"], 8)
+        self.assertGreaterEqual(kinds["attack"], 20)
+
+    def test_neutral_scores_zero(self):
+        for row in corpus_check.run():
+            if row["kind"] == "neutral":
+                self.assertEqual(row["label_score"], 0, row)
+                self.assertEqual(row["ids"], [], row)
 
 
 class TestGates(unittest.TestCase):

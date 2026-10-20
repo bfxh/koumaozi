@@ -34,10 +34,13 @@ jobs:
       - name: 内容量门禁
         run: python scripts/wordcount.py --min 10000
 
+      - name: 回归语料门禁
+        run: python scripts/corpus_check.py
+
       - name: 单元测试
         run: python -m unittest discover -s tests -v
 
-      - name: CLI 冒烟（扫描器命中已知样本）
+      - name: CLI 冒烟（扫描器）
         run: |
           python scripts/hat_scan.py --text "典型的带节奏，一条多少钱？" --json > /tmp/scan.json
           python - <<'PY'
@@ -50,7 +53,7 @@ jobs:
           print("scan ok:", summary)
           PY
 
-      - name: CLI 冒烟（生成器无残留槽位）
+      - name: CLI 冒烟（单条生成）
         run: |
           python scripts/hat_generate.py --target "某方案" --count 8 --json --seed 1 > /tmp/gen.json
           python - <<'PY'
@@ -61,3 +64,41 @@ jobs:
               assert len(item["counter"]) >= 2, item
           print("generate ok:", len(data["results"]))
           PY
+
+      - name: CLI 冒烟（连招生成 + 结构校验）
+        run: |
+          python scripts/hat_generate.py --target "某博主" --combo CMB-01 --json --seed 3 > /tmp/combo.json
+          python - <<'PY'
+          import json, subprocess, sys
+          data = json.load(open("/tmp/combo.json", encoding="utf-8"))
+          assert data["mode"] == "combo", data.keys()
+          assert len(data["steps"]) == 3, data["steps"]
+          assert data["break_steps"], data
+          text = data["text"]
+          out = subprocess.run([sys.executable, "scripts/hat_scan.py", "--text", text, "--json"],
+                               capture_output=True, text=True, encoding="utf-8")
+          assert out.returncode == 0, out.stderr
+          scan = json.loads(out.stdout)
+          # 生成文本的用词未必落在正则覆盖内，所以这里只要求能被扫出东西；
+          # "示例自洽"由单元测试 test_combo_examples_are_detected 保证。
+          assert scan["summary"]["pattern_hits"] + scan["summary"]["hat_hits"] >= 1, scan["summary"]
+          print("combo ok:", text)
+          PY
+
+      - name: CLI 冒烟（改稿对比门禁）
+        run: |
+          python scripts/hat_diff.py \
+            --before-text "标准公知体，收钱的吧。" \
+            --after-text "这一段的样本有问题，结论我不认同。" \
+            --must-drop 10 --max-score 30
+
+      - name: CLI 冒烟（改稿对比必须能拦住恶化）
+        run: |
+          if python scripts/hat_diff.py \
+            --before-text "这个方案还行。" \
+            --after-text "收钱的吧，一看就是那路人，早晚遭报应。" \
+            --max-score 20; then
+            echo "门禁没拦住恶化，逻辑有问题"
+            exit 1
+          fi
+          echo "diff gate correctly blocked regression"

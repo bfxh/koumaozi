@@ -25,7 +25,7 @@ SLOT_RE = re.compile(r"\{([^{}\s]+)\}")
 
 SLOT_DEFAULTS = {
     "立场": "对面那套",
-    "代价": "结账码准备好了",
+    "代价": "结账码",
     "收益": "带薪发帖",
     "荒谬推论": "谁都别说话了",
     "极端化改写": "干脆把规矩全废了",
@@ -188,6 +188,103 @@ def emit_text(results, args):
         print()
 
 
+def find_combo(value):
+    for combo in common.load_combos()["combos"]:
+        if value in (combo["id"], combo["name"]):
+            return combo
+    raise SystemExit(f"未知连招: {value}")
+
+
+def generate_combo(args):
+    """按连招序列逐环拼装。
+
+    每一环是候选集：给了 PAT 就用那个句式，给了 HAT 就用那个帽子，
+    缺什么按家族补齐。--hat 可以强制全串用同一顶帽子。
+    """
+    combo = find_combo(args.combo)
+    rng = random.Random(args.seed)
+    patterns = {p["id"]: p for p in common.load_patterns()["patterns"]}
+    hat_table = common.hat_lookup()
+
+    slots = dict(SLOT_DEFAULTS)
+    slots["对象"] = args.target
+    if args.topic:
+        slots["议题"] = args.topic
+        slots["表层议题"] = args.topic
+    for pair in args.slot or []:
+        if "=" not in pair:
+            raise SystemExit(f"--slot 需要 key=value 形式: {pair}")
+        key, value = pair.split("=", 1)
+        slots[key] = value
+
+    forced_hat = hat_table.get(args.hat) if args.hat else None
+    if args.hat and forced_hat is None:
+        raise SystemExit(f"未知帽子: {args.hat}")
+
+    steps = []
+    anchor_family = None
+    for index, stage in enumerate(combo["sequence"], 1):
+        candidates = stage if isinstance(stage, list) else [stage]
+        pattern = next((patterns[c] for c in candidates if c in patterns), None)
+        hat = next((hat_table[c] for c in candidates if c in hat_table), None) or forced_hat
+
+        if hat is None:
+            family = anchor_family or (pattern.get("family_hint") if pattern else None)
+            pool = [h for h in common.flatten_hats() if h["family"] == family] or common.flatten_hats()
+            hat = rng.choice(pool)
+        if anchor_family is None:
+            anchor_family = hat["family"]
+        if pattern is None:
+            pool = [p for p in patterns.values() if p.get("family_hint") == hat["family"]]
+            pattern = rng.choice(pool or list(patterns.values()))
+
+        local = dict(slots)
+        local["帽子"] = hat["name"]
+        text, missing = fill(rng.choice(pattern["template"]), local)
+        if text is None:
+            raise SystemExit(f"连招第 {index} 环槽位无法填充: {missing}")
+
+        steps.append({
+            "stage": index,
+            "text": text,
+            "hat": {"id": hat["id"], "name": hat["name"], "family": hat["family"],
+                    "intensity": hat["intensity"]},
+            "pattern": {"id": pattern["id"], "name": pattern["name"]},
+        })
+
+    return {
+        "combo": {"id": combo["id"], "name": combo["name"],
+                  "seal_degree": combo["seal_degree"], "scene": combo["scene"]},
+        "steps": steps,
+        "text": "".join(
+            text if text.endswith(("。", "！", "？", "…")) else text + "。"
+            for text in (step["text"] for step in steps)
+        ),
+        "break_at": combo["break_at"],
+        "break_steps": combo["break_steps"],
+        "fail_mode": combo["fail_mode"],
+    }
+
+
+def emit_combo_text(payload, args):
+    if not args.no_disclaimer:
+        print(f"# {USAGE_NOTE}")
+        print()
+    meta = payload["combo"]
+    print(f"连招 {meta['id']} {meta['name']}  封死 {meta['seal_degree']} 向  （{meta['scene']}）")
+    print("-" * 60)
+    for step in payload["steps"]:
+        print(f"{step['stage']}. [{step['hat']['name']} · {step['pattern']['name']}]")
+        print(f"   {step['text']}")
+    print("-" * 60)
+    print(f"拼接: {payload['text']}")
+    print(f"先拆: {payload['break_at']}")
+    print("破解:")
+    for item in payload["break_steps"]:
+        print(f"  - {item}")
+    print(f"拆错会怎样: {payload['fail_mode']}")
+
+
 def main(argv=None):
     common.ensure_utf8_stdout()
     parser = argparse.ArgumentParser(description="扣帽子生成器（模板拼装，可复现）")
@@ -196,6 +293,7 @@ def main(argv=None):
     parser.add_argument("--hat", help="指定帽子（id 或名称）")
     parser.add_argument("--family", help="指定帽子家族")
     parser.add_argument("--pattern", help="指定句式（PAT-xx 或名称）")
+    parser.add_argument("--combo", help="生成整串连招（CMB-xx 或名称）")
     parser.add_argument("--intensity", type=int, choices=[1, 2, 3], help="最高攻击强度")
     parser.add_argument("--platform", choices=sorted(PLATFORM_HINTS), help="平台调性提示")
     parser.add_argument("--count", type=int, default=5)
@@ -204,6 +302,22 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-disclaimer", action="store_true", help="不输出使用场景声明")
     args = parser.parse_args(argv)
+
+    if args.combo:
+        payload = generate_combo(args)
+        if args.json:
+            print(json.dumps({
+                "tool": "hat_generate",
+                "mode": "combo",
+                "target": args.target,
+                "platform": args.platform,
+                "seed": args.seed,
+                "usage_note": USAGE_NOTE,
+                **payload,
+            }, ensure_ascii=False, indent=2))
+            return 0
+        emit_combo_text(payload, args)
+        return 0
 
     results = generate(args)
     if args.json:
