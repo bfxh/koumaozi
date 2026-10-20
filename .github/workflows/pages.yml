@@ -1,0 +1,65 @@
+name: pages
+
+# 网页端（docs/）一推就更新。
+#
+# 为什么单独一个 workflow：ci.yml 是"门禁"，失败要拦人；这里是"发布"，
+# 挂了不该让人以为代码有问题。但发布前照样跑一次对拍——网页用的是浏览器里
+# 的 JS 判定，与 Python 侧不一致的话，发上去就是个判错的网站。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "data/**"
+      - "scripts/build_web.py"
+      - "scripts/web_parity.py"
+      - "scripts/web_parity_runner.js"
+      - "scripts/common.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 发布网页
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # 规则文件是派生物：改了 data/ 忘了重新生成，会在这里被拦住，
+      # 而不是发一个用旧规则判事的网页上去。
+      - name: 规则与真源同步
+        run: python scripts/build_web.py --check
+
+      - name: 网页端与 Python 端对拍
+        run: python scripts/web_parity.py
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

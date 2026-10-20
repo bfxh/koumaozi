@@ -83,6 +83,19 @@ def family_map():
     return load_hats()["families"]
 
 
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def read_version(root=None):
+    """版本号只认 VERSION 一处。SKILL.md 与 CHANGELOG 的同步由门禁校验。"""
+    root = root or REPO_ROOT
+    with open(os.path.join(root, "VERSION"), "r", encoding="utf-8") as fh:
+        value = fh.read().strip()
+    if not VERSION_RE.match(value):
+        raise ValueError(f"VERSION 不是语义化版本号: {value!r}")
+    return value
+
+
 def hat_lookup():
     """name / alias / id -> hat"""
     table = {}

@@ -20,6 +20,7 @@ SCRIPTS = os.path.join(REPO_ROOT, "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import common  # noqa: E402
+import build_web  # noqa: E402
 import corpus_check  # noqa: E402
 import doc_smoke  # noqa: E402
 import gate  # noqa: E402
@@ -29,6 +30,7 @@ import hat_scan  # noqa: E402
 import package  # noqa: E402
 import release_notes  # noqa: E402
 import verify_data  # noqa: E402
+import web_parity  # noqa: E402
 import wordcount  # noqa: E402
 
 
@@ -828,7 +830,9 @@ class TestGate(unittest.TestCase):
         core = {gate["key"] for gate in gate.select("core")}
         everything = {gate["key"] for gate in gate.select("all")}
         self.assertTrue(core <= everything)
-        self.assertEqual(core | {"docs", "cli", "package"}, everything)
+        # 全量 = 核心 + 这几个慢的。写死是有意的：新增或删掉一道门禁，
+        # 这里必须跟着改一次，避免"顺手删了一道"没人发现。
+        self.assertEqual(core | {"docs", "cli", "web", "package"}, everything)
 
     def test_select_only(self):
         picked = gate.select(only="data,corpus")
@@ -879,6 +883,18 @@ class TestGate(unittest.TestCase):
                 self.assertNotIn(f"python scripts/{script}", workflow,
                                  f"{name} 里还在直接调 {script}，应当统一走 gate.py")
 
+    def test_web_gate_skips_without_docs(self):
+        """安装包不带 docs/，网页端对拍必须标 SKIP 而不是红。
+
+        这是 1.6.0 那个坑的翻版：新加一道门禁，忘了声明"不适用"的条件，
+        用户装完一跑 gate 就以为代码坏了。
+        """
+        gate_def = gate.gate_by_key("web")
+        self.assertIsNotNone(gate_def)
+        needs = gate_def.get("needs") or []
+        self.assertTrue([path for path in needs if path.endswith("docs")],
+                        "web 门禁要声明 needs=docs/，否则安装包里会红")
+
     def test_gate_skips_when_needed_path_missing(self):
         """安装包里没有 tests/，单测门禁要跳过而不是变红。
 
@@ -923,6 +939,117 @@ class TestGate(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestWeb(unittest.TestCase):
+    """网页端：规则是派生物，判定是第二份实现。
+
+    两件事都会静默出错——网页照样打开、照样出结果，只是判得不对。
+    所以这里既盯"派生物与真源同步"，也盯"两份实现判得一样"。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rules_path = os.path.join(REPO_ROOT, "docs", "rules.js")
+        cls.index_path = os.path.join(REPO_ROOT, "docs", "index.html")
+        cls.app_path = os.path.join(REPO_ROOT, "docs", "app.js")
+        cls.scan_path = os.path.join(REPO_ROOT, "docs", "scan.js")
+
+    def read(self, path):
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_rules_file_is_in_sync_with_data(self):
+        import build_web
+        result = build_web.check(self.rules_path)
+        self.assertEqual(result["problems"], [], "改了 data/ 忘了生成 docs/rules.js")
+
+    def test_rules_version_matches_version_file(self):
+        match = re.search(r'"version":\s*"([^"]+)"', self.read(self.rules_path))
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), common.read_version())
+
+    def test_parity_with_python_scanner(self):
+        """70+ 条真实语料逐条对拍。缺 node 就跳过——不是失败，是这台机器验不了。"""
+        import web_parity
+        report = web_parity.run()
+        if report["skipped"]:
+            self.skipTest(report["skipped"])
+        self.assertEqual(report["problems"], [],
+                         "网页端与 Python 端判得不一样，网页的结论不可信")
+        self.assertGreaterEqual(report["cases"], 60, "对拍用例太少，拦不住分叉")
+
+    def test_compare_would_catch_a_difference(self):
+        """对拍本身也要证明不是空转：分数差一分、命中少一条，都必须报出来。"""
+        import web_parity
+        py_rows = [{"id": "X", "chars": 10,
+                    "stats": {"label_score": 51, "hat_hits": 1, "pattern_hits": 1,
+                              "combo_hits": 0, "critical_hits": 0},
+                    "findings": [{"kind": "hat", "pattern_id": "HAT-F1-01", "matched": "公知",
+                                  "severity": "Warning", "role": "used"}]}]
+        js_same = [{"id": "X", "chars": 10, "stats": dict(py_rows[0]["stats"]),
+                    "findings": [dict(py_rows[0]["findings"][0])]}]
+        self.assertEqual(web_parity.compare(py_rows, js_same), [])
+
+        js_score = [{"id": "X", "chars": 10,
+                     "stats": dict(py_rows[0]["stats"], label_score=50),
+                     "findings": [dict(py_rows[0]["findings"][0])]}]
+        self.assertTrue(web_parity.compare(py_rows, js_score))
+
+        js_miss = [{"id": "X", "chars": 10, "stats": dict(py_rows[0]["stats"]),
+                    "findings": []}]
+        self.assertTrue(web_parity.compare(py_rows, js_miss))
+
+        js_role = [{"id": "X", "chars": 10, "stats": dict(py_rows[0]["stats"]),
+                    "findings": [dict(py_rows[0]["findings"][0], role="quoted")]}]
+        self.assertTrue(web_parity.compare(py_rows, js_role), "降级判错也算分叉")
+
+    def test_page_loads_only_local_assets(self):
+        """静态页不能有外链依赖：断网、内网、离线包里都得能打开。"""
+        html = self.read(self.index_path)
+        sources = re.findall(r'<script[^>]+src="([^"]+)"', html)
+        styles = re.findall(r'<link[^>]+href="([^"]+)"', html)
+        css_urls = re.findall(r"url\((['\"]?)(https?://[^)]+)\)", html)
+        for asset in sources + styles:
+            self.assertFalse(asset.startswith(("http://", "https://")),
+                             f"页面依赖了外部资源: {asset}")
+        self.assertEqual(css_urls, [], "样式里引了外链（字体/图标），断网就变样")
+        self.assertIn("rules.js", sources)
+        self.assertIn("scan.js", sources)
+        self.assertIn("app.js", sources)
+
+    def test_referenced_files_exist(self):
+        html = self.read(self.index_path)
+        for name in re.findall(r'<script[^>]+src="([^"]+)"', html):
+            path = os.path.join(os.path.dirname(self.index_path), name)
+            self.assertTrue(os.path.isfile(path), f"{name} 被引用但不存在")
+
+    def test_every_element_app_js_looks_up_exists(self):
+        """app.js 里的 getElementById 拼错一个字母，页面就整块不渲染。"""
+        html = self.read(self.index_path)
+        ids = set(re.findall(r'\bid="([^"]+)"', html))
+        wanted = set(re.findall(r'getElementById\("([^"]+)"\)', self.read(self.app_path)))
+        self.assertTrue(wanted)
+        missing = sorted(wanted - ids)
+        self.assertEqual(missing, [], f"app.js 要找的元素在 index.html 里没有: {missing}")
+
+    def test_js_files_have_no_syntax_error(self):
+        node = shutil.which("node") or shutil.which("nodejs")
+        if not node:
+            self.skipTest("没有 node")
+        for name in ("rules.js", "scan.js", "app.js"):
+            proc = subprocess.run([node, "--check", os.path.join(REPO_ROOT, "docs", name)],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=120)
+            self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr}")
+
+    def test_scan_js_reads_constants_from_rules(self):
+        """降级词表不能抄进 JS：抄一份就等着两边分叉。"""
+        source = self.read(self.scan_path)
+        self.assertIn("RULES.amplifiers", source)
+        self.assertIn("RULES.negationPrefixes", source)
+        self.assertIn("RULES.metaPrefixes", source)
+        self.assertNotIn("说我", source, "元讨论前缀被抄进了逻辑文件")
 
 
 class TestCheckDir(unittest.TestCase):
@@ -973,6 +1100,21 @@ class TestCheckDir(unittest.TestCase):
         result = package.check_dir(REPO_ROOT)
         self.assertTrue(result["passed"])
         self.assertIsNotNone(result.get("skipped"))
+
+    def test_build_artifacts_are_not_treated_as_tampering(self):
+        """装好之后有人在那个目录里跑一次 package.py，会多出 dist/。
+
+        那不是"安装被人动过"。第一次在真装好的包里跑门禁就踩到了这个——
+        doc_smoke 会先打包，于是 --check-dir 当场把 dist/ 当成多出来的文件。
+        """
+        dest = tempfile.mkdtemp(dir=self.tmp)
+        with zipfile.ZipFile(self.built["path"]) as zf:
+            zf.extractall(dest)
+        os.makedirs(os.path.join(dest, "dist"), exist_ok=True)
+        with open(os.path.join(dest, "dist", "koumaozi-x.zip"), "wb") as fh:
+            fh.write(b"PK\x03\x04")
+        result = package.check_dir(dest)
+        self.assertTrue(result["passed"], result["problems"])
 
     def test_cli_exit_code(self):
         proc = subprocess.run([sys.executable, os.path.join(SCRIPTS, "package.py"),
