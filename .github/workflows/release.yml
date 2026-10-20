@@ -45,12 +45,15 @@ jobs:
         run: python scripts/gate.py --markdown gate.md
 
       # 包能跑不等于装完能用。安装脚本真装一遍，再用装好的路径扫一次。
+      # 最后在装好的目录里跑一遍门禁——1.6.0 就是漏了这步：包里不带 tests/，
+      # 用户装完一跑 gate 就红，而所有发布门禁全绿。
       - name: 安装脚本端到端
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
           mkdir -p "$HOME"
           bash scripts/install.sh --from dist/koumaozi-*.zip -y
-          python "$HOME/.workbuddy/skills/koumaozi/scripts/hat_scan.py" \
+          installed="$HOME/.workbuddy/skills/koumaozi"
+          python "$installed/scripts/hat_scan.py" \
             --text "典型的带节奏，一条多少钱？" --json > installed-scan.json
           python - <<'PY'
           import json
@@ -59,6 +62,7 @@ jobs:
           assert summary["pattern_hits"] >= 1, summary
           print("装完之后扫得出东西:", summary)
           PY
+          ( cd "$installed" && python scripts/gate.py --tier core )
 
       - name: 生成 Release 说明
         run: python scripts/release_notes.py --out NOTES.md
