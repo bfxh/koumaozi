@@ -14,10 +14,12 @@ concurrency:
   group: gates-${{ github.ref }}
   cancel-in-progress: true
 
+# 锁 LTS 而不是 ubuntu-latest：latest 会在 2026-10 迁到 Ubuntu 26，
+# 某天门禁会因为底层镜像换版而莫名其妙红一次。门禁要的是确定性。
 jobs:
   gates:
     name: py${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -111,3 +113,17 @@ jobs:
             exit 1
           fi
           echo "diff gate correctly blocked regression"
+
+      # 门禁数字直接贴到 run 页面，不用点开每一步才知道 55 顶帽子 / 47 条语料还在不在
+      - name: 门禁摘要
+        if: matrix.python == '3.12'
+        run: |
+          {
+            echo "### 门禁摘要（py3.12 代表）"
+            echo ""
+            echo '```'
+            python scripts/verify_data.py | tail -2
+            python scripts/corpus_check.py | tail -4
+            python scripts/wordcount.py | tail -3
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
