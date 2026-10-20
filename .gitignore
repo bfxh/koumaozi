@@ -6,3 +6,6 @@ report.json
 .venv/
 dist/
 .commitmsg.txt
+.tmp_*
+.url-*
+.shot-*
