@@ -54,6 +54,26 @@ bash scripts/install.sh --from-dir .       # 开发态：软链，改代码立�
 
 目标目录已存在时一律先改名成 `koumaozi.bak-<时间戳>`，不直接删——装脚本把人原来的安装干掉，比装不上更糟。
 
+**查一下该不该动手**（只读不写）：
+
+```bash
+bash scripts/install.sh --check            # 本地版本 / 线上版本 / 本地文件对不对得上
+```
+
+```powershell
+.\scripts\install.ps1 -Check
+```
+
+三件事一次报完：本地装的是哪一版、线上现在哪一版、本地文件与包内 `MANIFEST.sha256` 是否还一致（装完被改过、被半路中断的拷贝覆盖过，都不会报错，只会在某天扫不出东西时才暴露）。
+
+退出码 `0` 不用动 · `1` 该动手（有更新 / 未安装 / 本地文件被改）· `2` 查不到版本。所以可以直接接起来用：
+
+```bash
+bash scripts/install.sh --check || bash scripts/install.sh -y    # 有新版才装
+```
+
+版本比较按数字段比，不是字符串比——`1.10.0` 比 `1.9.0` 新，字符串比会判反，而这类脚本判反了不报错，只是永远"已是最新"。
+
 ## 快速开始
 
 ```bash
@@ -201,7 +221,7 @@ python3 scripts/gate.py --only data,corpus
 | `data` | 数据一致性 | schema、家族覆盖、别名冲突、模板槽位、文档引用的编号真实存在、版本号三处一致 |
 | `words` | 内容量 | 文档被大段删改后规模缩水（门槛一万字） |
 | `corpus` | 回归语料 | 漏检、误报、降级失效、句式/连招/家族覆盖出现空洞 |
-| `unit` | 单元测试 | 扫描器正反例、连招检测、生成器可复现、diff 方向、性能（防正则回溯爆炸） |
+| `unit` | 单元测试 | 扫描器正反例、连招检测、生成器可复现、diff 方向、性能（防正则回溯爆炸）、`install --check` 两平台的版本比较与完整性核对 |
 | `docs` | 文档命令 | 文档里的命令示例照抄能不能跑 |
 | `cli` | CLI 冒烟 | 四个命令的端到端形状：扫描有命中、连招三段结构、改稿门禁能拦恶化 |
 | `package` | 产物 | 发出去的包齐不齐、能不能跑（解压后验证） |
@@ -267,6 +287,7 @@ FAIL  回归语料  0.24s
 ```bash
 python3 scripts/package.py --verify         # 打包并自检
 python3 scripts/package.py --verify dist/koumaozi-*.zip     # 只验已有包
+python3 scripts/package.py --check-dir      # 核对当前目录（源码态会说跳过）
 python3 scripts/release_notes.py            # 看这一版会发什么说明
 ```
 
