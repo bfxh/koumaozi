@@ -68,11 +68,92 @@ def run():
     return rows
 
 
+def coverage(rows=None):
+    """统计语料与连招示例对数据的覆盖。
+
+    两个来源：
+    - corpus：真正跑过断言的正样本（strong）
+    - example：连招自带的示例，由单元测试保证能被识别（weak，但足以证明"这一式存在可命中的表达"）
+    """
+    rows = run() if rows is None else rows
+    pat_strong, fam_strong, hat_strong, cmb_strong = {}, {}, {}, {}
+    fam_of = {hat["id"]: hat["family"] for hat in common.flatten_hats()}
+
+    for row in rows:
+        if not row["passed"]:
+            continue
+        for pid in row["ids"]:
+            if pid.startswith("PAT"):
+                pat_strong.setdefault(pid, set()).add(row["id"])
+            elif pid.startswith("HAT"):
+                hat_strong.setdefault(pid, set()).add(row["id"])
+                family = fam_of.get(pid)
+                if family:
+                    fam_strong.setdefault(family, set()).add(row["id"])
+            elif pid.startswith("CMB"):
+                cmb_strong.setdefault(pid, set()).add(row["id"])
+
+    pat_weak, cmb_weak = {}, {}
+    compiled = hat_scan.compile_patterns()
+    for combo in common.load_combos()["combos"]:
+        findings, _ = hat_scan.scan_text(combo["id"], combo["example"], compiled)
+        for item in findings:
+            if item.get("role", "used") != "used":
+                continue
+            if item["pattern_id"].startswith("PAT"):
+                pat_weak.setdefault(item["pattern_id"], set()).add(combo["id"] + "·示例")
+            elif item["pattern_id"].startswith("CMB"):
+                cmb_weak.setdefault(item["pattern_id"], set()).add(combo["id"] + "·示例")
+
+    return {
+        "patterns": {pid: sorted(pat_strong.get(pid, set()) | pat_weak.get(pid, set()))
+                     for pid in [p["id"] for p in common.load_patterns()["patterns"]]},
+        "pattern_strong": {k: sorted(v) for k, v in pat_strong.items()},
+        "families": {k: sorted(v) for k, v in fam_strong.items()},
+        "hats": {k: sorted(v) for k, v in hat_strong.items()},
+        "combos": {cid: sorted(cmb_strong.get(cid, set()) | cmb_weak.get(cid, set()))
+                   for cid in [c["id"] for c in common.load_combos()["combos"]]},
+        "hats_uncovered": sorted(h["id"] for h in common.flatten_hats() if h["id"] not in hat_strong),
+        "totals": {
+            "patterns": len(common.load_patterns()["patterns"]),
+            "families": len(common.family_map()),
+            "hats": len(common.flatten_hats()),
+            "combos": len(common.load_combos()["combos"]),
+        },
+    }
+
+
+def coverage_problems(cov, min_family_cases=2, min_family_hats=2):
+    """覆盖门禁：漏掉任何一式，说明"这一式到底能不能被识别"没有证据。"""
+    problems = []
+    for pid, sources in cov["patterns"].items():
+        if not sources:
+            problems.append(f"句式 {pid} 没有任何语料或示例覆盖")
+    for cid, sources in cov["combos"].items():
+        if not sources:
+            problems.append(f"连招 {cid} 没有任何语料或示例覆盖")
+
+    hat_family = {}
+    for hat in common.flatten_hats():
+        hat_family.setdefault(hat["family"], set()).add(hat["id"])
+    for family, hats in sorted(hat_family.items()):
+        cases = cov["families"].get(family, [])
+        if len(cases) < min_family_cases:
+            problems.append(f"家族 {family} 只有 {len(cases)} 条语料，要求 ≥{min_family_cases}")
+        hit_hats = {hid for hid in hats if hid in cov["hats"]}
+        if len(hit_hats) < min_family_hats:
+            problems.append(f"家族 {family} 只覆盖 {len(hit_hats)} 顶帽子，要求 ≥{min_family_hats}")
+    return problems
+
+
 def main(argv=None):
     common.ensure_utf8_stdout()
     parser = argparse.ArgumentParser(description="回归语料门禁")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--verbose", action="store_true", help="打印每条的命中明细")
+    parser.add_argument("--no-coverage", action="store_true", help="跳过覆盖门禁（仅调试用）")
+    parser.add_argument("--min-family-cases", type=int, default=2)
+    parser.add_argument("--min-family-hats", type=int, default=2)
     args = parser.parse_args(argv)
 
     rows = run()
@@ -81,6 +162,10 @@ def main(argv=None):
     attack = [r for r in rows if r["kind"] == "attack"]
     neutral = [r for r in rows if r["kind"] == "neutral"]
 
+    cov = coverage(rows)
+    cov_problems = [] if args.no_coverage else coverage_problems(
+        cov, args.min_family_cases, args.min_family_hats)
+
     payload = {
         "tool": "corpus_check",
         "total": len(rows),
@@ -88,12 +173,24 @@ def main(argv=None):
         "failed": len(failed),
         "attack_pass": f"{sum(1 for r in attack if r['passed'])}/{len(attack)}",
         "neutral_pass": f"{sum(1 for r in neutral if r['passed'])}/{len(neutral)}",
+        "coverage": {
+            "patterns_covered": sum(1 for v in cov["patterns"].values() if v),
+            "patterns_total": cov["totals"]["patterns"],
+            "patterns_strong_covered": len(cov["pattern_strong"]),
+            "combos_covered": sum(1 for v in cov["combos"].values() if v),
+            "combos_total": cov["totals"]["combos"],
+            "hats_covered": len(cov["hats"]),
+            "hats_total": cov["totals"]["hats"],
+            "hats_uncovered": cov["hats_uncovered"],
+            "families": {k: len(v) for k, v in sorted(cov["families"].items())},
+            "problems": cov_problems,
+        },
         "cases": rows,
     }
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0 if not failed else 1
+        return 0 if not failed and not cov_problems else 1
 
     print(f"语料 {len(rows)} 条  |  正样本 {payload['attack_pass']}  负样本 {payload['neutral_pass']}")
     print("-" * 66)
@@ -105,8 +202,28 @@ def main(argv=None):
             for problem in row["problems"]:
                 print(f"      × {problem}")
     print("-" * 66)
-    print("通过" if not failed else f"失败 {len(failed)} 条")
-    return 0 if not failed else 1
+    report = payload["coverage"]
+    print(f"覆盖  句式 {report['patterns_covered']}/{report['patterns_total']} "
+          f"(仅语料 {report['patterns_strong_covered']})   "
+          f"连招 {report['combos_covered']}/{report['combos_total']}   "
+          f"帽子 {report['hats_covered']}/{report['hats_total']}")
+    print("家族语料数: " + "  ".join(f"{k}={v}" for k, v in report["families"].items()))
+    uncovered = [pid for pid, v in cov["patterns"].items() if v and not cov["pattern_strong"].get(pid)]
+    if uncovered:
+        print(f"仅靠示例覆盖（无独立语料）: {', '.join(uncovered)}")
+    print(f"帽子覆盖 {report['hats_covered']}/{report['hats_total']}："
+          "帽子匹配是精确词形，不存在识别不出的风险（别名唯一性由 verify_data 拦截），"
+          "所以帽子覆盖是代表性抽样而非能力缺口；门禁只要求每家族 ≥2 顶有语料。")
+    if args.verbose and cov["hats_uncovered"]:
+        print(f"未覆盖帽子（{len(cov['hats_uncovered'])} 顶）: {', '.join(cov['hats_uncovered'])}")
+    for problem in cov_problems:
+        print(f"  × {problem}")
+    print("-" * 66)
+    if failed or cov_problems:
+        print(f"失败：{len(failed)} 条语料不符，{len(cov_problems)} 项覆盖不足")
+        return 1
+    print("通过")
+    return 0
 
 
 if __name__ == "__main__":

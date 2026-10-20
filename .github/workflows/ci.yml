@@ -40,6 +40,10 @@ jobs:
       - name: 单元测试
         run: python -m unittest discover -s tests -v
 
+      - name: 单元测试（弃用警告视为失败，仅 3.13）
+        if: matrix.python == '3.13'
+        run: python -W error::DeprecationWarning -m unittest discover -s tests
+
       - name: CLI 冒烟（扫描器）
         run: |
           python scripts/hat_scan.py --text "典型的带节奏，一条多少钱？" --json > /tmp/scan.json

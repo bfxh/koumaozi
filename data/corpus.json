@@ -1,230 +1,755 @@
 {
   "schema_version": 1,
-  "note": "回归语料。文本为改写构造的样本，不是任何真实人物的发言；不含个人信息。正样本验证'该抓的抓到'，负样本验证'不该抓的别抓'。must_include 用子集语义，允许额外命中，避免正则微调就炸测试。",
+  "note": "回归语料。文本为改写构造的样本，不是任何真实人物的发言；不含个人信息。正样本验证'该抓的抓到'，负样本验证'不该抓的别抓'，同时承担数据覆盖职责：每个句式、每条连招、每个家族都必须至少被一条语料或连招示例覆盖。must_include 用子集语义，允许额外命中，避免正则微调就炸测试。",
   "cases": [
     {
       "id": "CRP-01",
       "kind": "attack",
       "family": "stance-traitor",
       "text": "说这话的，标准公知体，散了吧。",
-      "expect": {"must_include": ["HAT-F1-01"], "min_hits": 1, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F1-01"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-02",
       "kind": "attack",
       "family": "stance-traitor",
       "text": "殖人味太冲了，跪久了站不起来是吧。",
-      "expect": {"must_include": ["HAT-F1-02"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F1-02"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-03",
       "kind": "attack",
       "family": "stance-traitor",
       "text": "小粉红又开始上头了，建议清醒一点。",
-      "expect": {"must_include": ["HAT-F1-04"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F1-04"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-04",
       "kind": "attack",
       "family": "stance-traitor",
       "text": "这不是境外势力是什么？背后肯定有资金链。",
-      "expect": {"must_include": ["HAT-F1-05"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F1-05"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-05",
       "kind": "attack",
       "family": "intellect-dismissal",
       "text": "巨婴行为，一点挫折就哭着要说法。",
-      "expect": {"must_include": ["HAT-F2-01"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F2-01"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-06",
       "kind": "attack",
       "family": "intellect-dismissal",
       "text": "这水平真是九年义务教育漏网，先去读两本书再来吧。",
-      "expect": {"must_include": ["HAT-F2-02", "PAT-07"], "min_hits": 2, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F2-02",
+          "PAT-07"
+        ],
+        "min_hits": 2,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-07",
       "kind": "attack",
       "family": "intellect-dismissal",
       "text": "被洗脑了吧，你看到的都是他们想让你看的。",
-      "expect": {"must_include": ["HAT-F2-03"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F2-03"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-08",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "又在这带节奏，一条多少钱？",
-      "expect": {"must_include": ["HAT-F3-01", "PAT-02"], "min_hits": 2, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F3-01",
+          "PAT-02"
+        ],
+        "min_hits": 2,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-09",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "一看就是水军，批量发的一眼假。",
-      "expect": {"must_include": ["HAT-F3-03"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F3-03"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-10",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "洗地洗得真专业，收了多少公关费？",
-      "expect": {"must_include": ["HAT-F3-06", "PAT-02"], "min_hits": 2, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F3-06",
+          "PAT-02"
+        ],
+        "min_hits": 2,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-11",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "装理中客是吧，两边都不站其实就是偏。",
-      "expect": {"must_include": ["HAT-F3-07"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F3-07"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-12",
       "kind": "attack",
       "family": "identity-stigma",
       "text": "小镇做题家思维，格局就这么大。",
-      "expect": {"must_include": ["HAT-F4-01"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F4-01"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-13",
       "kind": "attack",
       "family": "identity-stigma",
       "text": "圣母来了，你出钱吗你替他坐牢吗？",
-      "expect": {"must_include": ["HAT-F4-04"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F4-04"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-14",
       "kind": "attack",
       "family": "group-threat",
       "text": "女拳又出来打拳了，天天就这一套。",
-      "expect": {"must_include": ["HAT-F5-01"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F5-01"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-15",
       "kind": "attack",
       "family": "group-threat",
       "text": "饭圈思维，滤镜厚得看不见事实了。",
-      "expect": {"must_include": ["HAT-F5-02"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F5-02"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-16",
       "kind": "attack",
       "family": "expertise-gate",
       "text": "外行指导内行，你做过这个项目吗？",
-      "expect": {"must_include": ["HAT-F6-01"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F6-01"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-17",
       "kind": "attack",
       "family": "expertise-gate",
       "text": "这想法还是太理想化了，一看就是没在一线待过的人提的，落不了地。",
-      "expect": {"must_include": ["HAT-F6-03"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F6-03"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-18",
       "kind": "attack",
       "family": "moral-verdict",
       "text": "双标玩得真溜，换成别人你早就炸了。",
-      "expect": {"must_include": ["HAT-F7-01", "PAT-12"], "min_hits": 2, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F7-01",
+          "PAT-12"
+        ],
+        "min_hits": 2,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-19",
       "kind": "attack",
       "family": "moral-verdict",
       "text": "这种事你也做得出来，良心不会痛吗？",
-      "expect": {"must_include": ["PAT-13"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "PAT-13"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-20",
       "kind": "attack",
       "family": "temporal-politics",
       "text": "历史会证明你错了，时间会审判一切。",
-      "expect": {"must_include": ["PAT-24"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "PAT-24"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-21",
       "kind": "attack",
       "family": "temporal-politics",
       "text": "开倒车呢这是，早晚要复辟。",
-      "expect": {"must_include": ["HAT-F8-02"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "HAT-F8-02"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-22",
       "kind": "attack",
       "family": "group-threat",
       "text": "数据显示九成网友都反对，这还用争？",
-      "expect": {"must_include": ["PAT-23"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "PAT-23"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-23",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "你什么时候才肯停止替他们说话？有本事拿出证据来。",
-      "expect": {"must_include": ["PAT-17", "PAT-11"], "min_hits": 2, "score_band": [30, 100]}
+      "expect": {
+        "must_include": [
+          "PAT-17",
+          "PAT-11"
+        ],
+        "min_hits": 2,
+        "score_band": [
+          30,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-24",
       "kind": "attack",
       "family": "motive-contamination",
       "text": "问了三遍不敢答，心里有数了。",
-      "expect": {"must_include": ["PAT-18"], "min_hits": 1, "score_band": [20, 100]}
+      "expect": {
+        "must_include": [
+          "PAT-18"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     },
     {
       "id": "CRP-25",
       "kind": "neutral",
       "family": "",
       "text": "本次评审共收到十二份方案，按可维护性、部署成本、回滚速度三项指标逐条打分，最终采纳第三方案，因为它在回滚速度上快四倍，且不引入新的外部依赖。后续两周补充压测数据。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-26",
       "kind": "neutral",
       "family": "",
       "text": "安装步骤：先解压到目标目录，再以管理员身份运行 install.cmd，等待依赖下载完成后重启终端。若提示端口占用，修改 config.toml 里的 port 字段。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-27",
       "kind": "neutral",
       "family": "",
       "text": "评审意见：第 42 行的错误处理吞掉了异常，建议向上抛出或至少记录堆栈；第 88 行的循环可以提到外层，减少一次遍历。整体结构清晰，可以合并。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-28",
       "kind": "neutral",
       "family": "",
       "text": "这本书前三章铺得太开，读者很难跟上。也可能是作者想建立足够的背景，但代价是可读性，同类作品在节奏控制上处理得更好。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-29",
       "kind": "neutral",
       "family": "",
       "text": "会议纪要：周三确认接口契约，周四联调，周五灰度。风险点是第三方证书还没下来，若延迟则顺延一周，负责人本周内给结论。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-30",
       "kind": "neutral",
       "family": "",
       "text": "本季度抽样 1200 名用户，回收有效问卷 1103 份，置信区间 95%，误差正负三个百分点。满意度较上季度上升两个点，主要来自加载速度改善。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-31",
       "kind": "neutral",
       "family": "",
       "text": "我提交的退款申请已经过了九天，工单号 20261012-7731，客服一直没有回复。麻烦按流程处理一下，我需要一个明确的到账时间。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
     },
     {
       "id": "CRP-32",
       "kind": "neutral",
       "family": "",
       "text": "从北京到上海的高铁最快四小时十八分，二等座票价 553 元，早班车六点二十七分发车，需要提前二十分钟到站。",
-      "expect": {"must_include": [], "min_hits": 0, "max_hits": 0, "score_band": [0, 0]}
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "CRP-33",
+      "kind": "attack",
+      "family": "stance-traitor",
+      "text": "这事上只有两种人：要么站我们，要么站他们，没有第三种。",
+      "expect": {
+        "must_include": [
+          "PAT-04"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-34",
+      "kind": "attack",
+      "family": "temporal-politics",
+      "text": "今天让一步，明天就得让十步，再这么下去迟早收不住。",
+      "expect": {
+        "must_include": [
+          "PAT-06"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-35",
+      "kind": "attack",
+      "family": "intellect-dismissal",
+      "text": "你说的专业，说白了就是会装，别拿这个词当挡箭牌。",
+      "expect": {
+        "must_include": [
+          "PAT-16"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-36",
+      "kind": "attack",
+      "family": "moral-verdict",
+      "text": "我说两句反倒成受害者了？被围攻的是我吧。",
+      "expect": {
+        "must_include": [
+          "PAT-19"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-37",
+      "kind": "attack",
+      "family": "moral-verdict",
+      "text": "又在消费苦难，这种事也拿来蹭，真够可以的。",
+      "expect": {
+        "must_include": [
+          "HAT-F7-03"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-38",
+      "kind": "attack",
+      "family": "temporal-politics",
+      "text": "赶上好时候罢了，靠时代不靠本事，别把红利说成本事。",
+      "expect": {
+        "must_include": [
+          "HAT-F8-05"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-39",
+      "kind": "attack",
+      "family": "intellect-dismissal",
+      "text": "你的意思就是说干脆什么都别管了？",
+      "expect": {
+        "must_include": [
+          "PAT-03"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-40",
+      "kind": "attack",
+      "family": "group-threat",
+      "text": "跟他们一路的货色，难怪说话一个味儿。",
+      "expect": {
+        "must_include": [
+          "PAT-05"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-41",
+      "kind": "attack",
+      "family": "expertise-gate",
+      "text": "这个问题专家早就定了，不用再讨论。",
+      "expect": {
+        "must_include": [
+          "PAT-08"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-42",
+      "kind": "attack",
+      "family": "stance-traitor",
+      "text": "这不是技术问题，已经上升到立场问题了。",
+      "expect": {
+        "must_include": [
+          "PAT-09"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-43",
+      "kind": "attack",
+      "family": "group-threat",
+      "text": "看了一眼评论区，果然都这样。",
+      "expect": {
+        "must_include": [
+          "PAT-10"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-44",
+      "kind": "attack",
+      "family": "identity-stigma",
+      "text": "作为一个成年人，你也信这个？",
+      "expect": {
+        "must_include": [
+          "PAT-14"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-45",
+      "kind": "attack",
+      "family": "moral-verdict",
+      "text": "这操作简直无异于抢劫。",
+      "expect": {
+        "must_include": [
+          "PAT-20"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-46",
+      "kind": "attack",
+      "family": "intellect-dismissal",
+      "text": "难道不该反思吗？难道这也叫专业？",
+      "expect": {
+        "must_include": [
+          "PAT-21"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "id": "CRP-47",
+      "kind": "attack",
+      "family": "intellect-dismissal",
+      "text": "不愧是人间清醒，建议直接颁奖。",
+      "expect": {
+        "must_include": [
+          "PAT-22"
+        ],
+        "min_hits": 1,
+        "score_band": [
+          20,
+          100
+        ]
+      }
     }
   ]
 }
