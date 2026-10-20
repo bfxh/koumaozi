@@ -18,6 +18,43 @@
 
 **这就是帽子。** 它不反驳你，它取消你。本仓库把这类操作拆成 55 顶帽子、24 式句式、8 个家族，每一顶都给出识别特征、破解入口、以及"什么时候这顶帽子会失效"。
 
+## 安装
+
+两种方式，都不需要 clone 仓库。
+
+**用 Release 包**（推荐）：
+
+```bash
+# Linux / macOS / WSL
+curl -fL -O https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip
+curl -fL -O https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip.sha256
+sha256sum -c koumaozi-1.4.0.zip.sha256
+mkdir -p ~/.workbuddy/skills/koumaozi
+unzip -o koumaozi-1.4.0.zip -d ~/.workbuddy/skills/koumaozi
+```
+
+```powershell
+# Windows
+Invoke-WebRequest "https://github.com/bfxh/koumaozi/releases/latest/download/koumaozi-1.4.0.zip" -OutFile "koumaozi-1.4.0.zip"
+Expand-Archive "koumaozi-1.4.0.zip" -DestinationPath "$HOME\.workbuddy\skills\koumaozi" -Force
+```
+
+**用安装脚本**（会先验 sha256，再在临时目录自检，通过了才动目标目录）：
+
+```bash
+bash scripts/install.sh                    # 装最新版
+bash scripts/install.sh --version v1.4.0   # 指定版本
+bash scripts/install.sh --from-dir .       # 开发态：软链，改代码立即生效
+```
+
+```powershell
+.\scripts\install.ps1
+.\scripts\install.ps1 -Version v1.4.0
+.\scripts\install.ps1 -FromDir .           # 开发态：Junction 指向源码
+```
+
+目标目录已存在时一律先改名成 `koumaozi.bak-<时间戳>`，不直接删——装脚本把人原来的安装干掉，比装不上更糟。
+
 ## 快速开始
 
 ```bash
@@ -53,6 +90,8 @@ Python 3.8+，**标准库零依赖**。Windows 控制台自动切 UTF-8。
 ```
 koumaozi/
 ├── SKILL.md                          技能主干：四要素模型、双模工作流、反制三阶
+├── VERSION                           版本单一真源（SKILL.md / CHANGELOG 由门禁校验同步）
+├── CHANGELOG.md                      版本史（Release 说明从这里抽）
 ├── data/
 │   ├── hats.json                     55 顶帽子（机器可读单一真源）
 │   ├── patterns.json                 24 式攻击句式 + 生成模板
@@ -71,8 +110,15 @@ koumaozi/
 │   ├── hat_generate.py               生成器（单条 + 连招，可复现）
 │   ├── hat_diff.py                   改稿对比（可当门禁）
 │   ├── corpus_check.py               回归语料门禁
-│   ├── verify_data.py                一致性门禁
-│   └── wordcount.py                  内容量门禁
+│   ├── verify_data.py                一致性门禁（含版本同步）
+│   ├── wordcount.py                  内容量门禁
+│   ├── package.py                    打包 + 产物自检（解压后验证，不验源目录）
+│   ├── release_notes.py              从 CHANGELOG 抽发版说明
+│   ├── install.sh                    安装（Linux/macOS/WSL）
+│   └── install.ps1                   安装（Windows，Junction 支持开发态）
+├── .github/workflows/
+│   ├── ci.yml                        六道门禁 × py3.9/3.12/3.13
+│   └── release.yml                   打 tag 发版：门禁 → 打包自检 → 装一遍 → 发布 → 回收复检
 └── tests/test_koumaozi.py            门禁测试
 ```
 
@@ -164,6 +210,27 @@ CI 跑六道，Python 3.9 / 3.12 / 3.13 三版本矩阵：
 **干净负样本证明不了降级逻辑**——那些文本压根没触发词形，`context_role` 从头到尾没执行过。写这批样本时立刻撞出两个真实误报：「把对手**说成**水军」「同事**质疑**对方收钱」被算成本人在扣帽子。前者结构上无法与正样本「别把红利说成本事」区分（都是"把 X 说成 Y"），属于词面检测的边界，记在 SKILL.md 里不修；后者是转述他人指控，补进 `META_PREFIXES` 才算解决。
 
 代价是「我质疑你收钱」也会降一级。接受这个代价：把怀疑说成怀疑，本来就比直接定性弱。
+
+## 发版
+
+推 `v*` tag 触发 `.github/workflows/release.yml`，顺序是：
+
+1. **tag 与 `VERSION` 必须一致**——版本号在 `VERSION` 一处定义，`SKILL.md` 的 frontmatter 与 `CHANGELOG.md` 最新段由 `verify_data.py` 校验同步，任何一处漂了就发不出去。
+2. **全量门禁重跑一遍**。打 tag 不等于推 main，那个 commit 很可能从没被 `ci.yml` 验过。
+3. **打包 + 产物自检**：`package.py --verify` 解压到干净临时目录，按包内 `MANIFEST.sha256` 校验每个文件，再在**解压后**的目录里跑数据门禁、语料门禁、扫描、生成、改稿对比。
+4. **安装脚本端到端**：真跑一次 `install.sh` 装到临时 HOME，再用装好的路径扫一次。
+5. **建 Release**，附 `koumaozi-<version>.zip` 与 `.sha256`，说明从 `CHANGELOG.md` 抽（`release_notes.py`），抽不到就不发。
+6. **发布后回收复检**：把刚上传的资产下载回来，和本地验过的那份比 sha256。
+
+第 3、6 步是这套 CD 的全部意义。**只验源码目录是假 CD**——少打一个 `data/` 文件照样一路绿，用户装上去当场报错。所以验证对象永远是"解压出来的那一份"和"从 Release 下载回来的那一份"，不是工作区。
+
+本地复现：
+
+```bash
+python3 scripts/package.py --verify         # 打包并自检
+python3 scripts/package.py --verify dist/koumaozi-1.4.0.zip   # 只验已有包
+python3 scripts/release_notes.py            # 看这一版会发什么说明
+```
 
 ## License
 

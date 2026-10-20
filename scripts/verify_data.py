@@ -305,9 +305,63 @@ def check_naming(report):
         report.error("NAMING", "SKILL.md frontmatter 缺少 name")
         return
     declared = name_line.group(1).strip()
+
+    # 目录名只在开发仓里是硬约束：改仓库名而忘了改 name 才是真问题。
+    # 装好之后目录名由安装者决定（压成 koumaozi-1.3.0 解压也很正常），
+    # 拿它当门禁只会让产物自检永远红——用 .git 是否存在区分这两种场景。
+    if not os.path.isdir(os.path.join(common.REPO_ROOT, ".git")):
+        return
     report.checked += 1
     if declared != repo_name:
         report.error("NAMING", f"skill name ({declared}) 与仓库目录名 ({repo_name}) 不一致")
+
+
+VERSION_FILE_RE = re.compile(r"^\d+\.\d+\.\d+$")
+CHANGELOG_HEAD_RE = re.compile(r"^##\s+(\d+\.\d+\.\d+)\s*$", re.M)
+
+
+def check_version(report):
+    """版本号三处必须一致：VERSION / SKILL.md frontmatter / CHANGELOG 最新段。
+
+    这三处不一致的后果不是"显示错了"，而是发版发出一个自报版本与实际内容不符的包。
+    发布流程按 VERSION 打 tag、按 CHANGELOG 抽说明，任何一处漂了，Release 就在撒谎。
+    """
+    version_path = os.path.join(common.REPO_ROOT, "VERSION")
+    if not os.path.isfile(version_path):
+        report.error("VERSION", "缺少 VERSION 文件")
+        return None
+    with open(version_path, "r", encoding="utf-8") as fh:
+        version = fh.read().strip()
+    report.checked += 1
+    if not VERSION_FILE_RE.match(version):
+        report.error("VERSION", f"VERSION 不是 x.y.z 格式: {version!r}")
+        return None
+
+    skill = os.path.join(common.REPO_ROOT, "SKILL.md")
+    if os.path.isfile(skill):
+        with open(skill, "r", encoding="utf-8") as fh:
+            head = fh.read(2000)
+        match = FRONTMATTER_RE.match(head)
+        if match:
+            declared = re.search(r"^version:\s*[\"']?([^\"'\n]+)", match.group(1), re.M)
+            report.checked += 1
+            if not declared:
+                report.error("VERSION", "SKILL.md frontmatter 缺少 version")
+            elif declared.group(1).strip() != version:
+                report.error("VERSION",
+                             f"SKILL.md version ({declared.group(1).strip()}) 与 VERSION ({version}) 不一致")
+
+    changelog = os.path.join(common.REPO_ROOT, "CHANGELOG.md")
+    if os.path.isfile(changelog):
+        with open(changelog, "r", encoding="utf-8") as fh:
+            headings = CHANGELOG_HEAD_RE.findall(fh.read())
+        report.checked += 1
+        if not headings:
+            report.error("VERSION", "CHANGELOG.md 里找不到任何 `## x.y.z` 段落")
+        elif headings[0] != version:
+            report.error("VERSION",
+                         f"CHANGELOG 最新版本是 {headings[0]}，VERSION 是 {version}（发版说明会抽错段）")
+    return version
 
 
 def main(argv=None):
@@ -324,6 +378,7 @@ def main(argv=None):
     corpus_ids = check_corpus(report, hat_ids, pattern_ids)
     check_references(report, hat_ids, pattern_ids, combo_ids, corpus_ids)
     check_naming(report)
+    version = check_version(report)
 
     payload = {
         "tool": "verify_data",
@@ -333,6 +388,7 @@ def main(argv=None):
         "combos": len(combo_ids),
         "corpus": len(corpus_ids),
         "families": len(family_counts),
+        "version": version,
         "errors": report.errors,
         "warnings": report.warnings,
         "passed": report.ok(),
@@ -340,7 +396,8 @@ def main(argv=None):
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(f"检查项 {report.checked}  |  帽子 {payload['hats']}  句式 {payload['patterns']}  "
+        print(f"检查项 {report.checked}  |  版本 {payload['version']}  "
+              f"帽子 {payload['hats']}  句式 {payload['patterns']}  "
               f"连招 {payload['combos']}  语料 {payload['corpus']}  家族 {payload['families']}")
         for item in report.errors:
             print(f"  ERROR [{item['code']}] {item['message']}")

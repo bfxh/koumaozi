@@ -20,6 +20,8 @@ import corpus_check  # noqa: E402
 import hat_diff  # noqa: E402
 import hat_generate  # noqa: E402
 import hat_scan  # noqa: E402
+import package  # noqa: E402
+import release_notes  # noqa: E402
 import verify_data  # noqa: E402
 import wordcount  # noqa: E402
 
@@ -478,6 +480,143 @@ class TestEncoding(unittest.TestCase):
                 continue
             with open(path, "rb") as fh:
                 self.assertFalse(fh.read(3) == b"\xef\xbb\xbf", f"{name} 含 BOM")
+
+
+class TestPackage(unittest.TestCase):
+    """产物门禁：验证的是被交付的那一份，不是源目录。
+
+    光验源码是假 CD——少打一个 data 文件照样一路绿，用户装上去当场报错。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls.tmp = tempfile.mkdtemp(prefix="koumaozi-test-pkg-")
+        cls.built = package.build(out_dir=cls.tmp)
+        cls.zip_path = cls.built["path"]
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_bundle_has_manifest_and_checksum(self):
+        import zipfile
+        with zipfile.ZipFile(self.zip_path) as zf:
+            names = zf.namelist()
+        self.assertIn(package.MANIFEST_NAME, names)
+        self.assertIn("SKILL.md", names)
+        self.assertIn("data/hats.json", names)
+        self.assertFalse([n for n in names if "__pycache__" in n], names)
+        self.assertTrue(os.path.isfile(self.zip_path + ".sha256"))
+
+    def test_manifest_covers_every_file(self):
+        import zipfile
+        with zipfile.ZipFile(self.zip_path) as zf:
+            manifest = package.parse_manifest(zf.read(package.MANIFEST_NAME).decode("utf-8"))
+            names = {n for n in zf.namelist() if n != package.MANIFEST_NAME}
+        self.assertEqual(set(manifest), names, "清单与实际打包内容不一致")
+
+    def test_verify_passes_on_fresh_build(self):
+        result = package.verify(self.zip_path)
+        self.assertTrue(result["passed"], result["problems"])
+
+    def test_verify_catches_missing_file(self):
+        """漏打一个文件是发布最常见的翻车方式，必须被抓到。"""
+        import zipfile
+        broken = os.path.join(self.tmp, "missing.zip")
+        with zipfile.ZipFile(self.zip_path) as zin, \
+                zipfile.ZipFile(broken, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == "data/corpus.json":
+                    continue
+                zout.writestr(item, zin.read(item.filename))
+        result = package.verify(broken)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("corpus.json" in p for p in result["problems"]), result["problems"])
+
+    def test_verify_catches_tampered_content(self):
+        import zipfile
+        tampered = os.path.join(self.tmp, "tampered.zip")
+        with zipfile.ZipFile(self.zip_path) as zin, \
+                zipfile.ZipFile(tampered, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "data/hats.json":
+                    data = data.replace(b'"hats"', b'"hatz"', 1)
+                zout.writestr(item, data)
+        result = package.verify(tampered)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("hats.json" in p for p in result["problems"]), result["problems"])
+
+    def test_rejects_path_traversal(self):
+        """包内路径穿越（../../etc/x）必须拒绝，别等解压出来才发现。"""
+        import zipfile
+        evil = os.path.join(self.tmp, "evil.zip")
+        with zipfile.ZipFile(evil, "w") as zf:
+            zf.writestr("../../evil.txt", "x")
+            zf.writestr(package.MANIFEST_NAME, "")
+        with self.assertRaises(ValueError):
+            package.verify(evil)
+
+
+class TestVersion(unittest.TestCase):
+    def test_version_is_semver(self):
+        version = package.read_version()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+
+    def test_version_matches_skill_and_changelog(self):
+        report = verify_data.Report()
+        version = verify_data.check_version(report)
+        self.assertIsNotNone(version)
+        self.assertTrue(report.ok(), report.errors)
+
+    def test_gate_catches_drift_between_sources(self):
+        """把三处版本故意写歪一处，门禁必须红——否则它挡不住发错版本。"""
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="koumaozi-test-ver-")
+        original = common.REPO_ROOT
+        try:
+            with open(os.path.join(tmp, "VERSION"), "w", encoding="utf-8") as fh:
+                fh.write("9.9.9\n")
+            with open(os.path.join(tmp, "SKILL.md"), "w", encoding="utf-8") as fh:
+                fh.write('---\nname: "koumaozi"\nversion: "1.0.0"\n---\n')
+            with open(os.path.join(tmp, "CHANGELOG.md"), "w", encoding="utf-8") as fh:
+                fh.write("## 1.0.0\n\n旧说明\n")
+            common.REPO_ROOT = tmp
+            report = verify_data.Report()
+            verify_data.check_version(report)
+            self.assertFalse(report.ok(), "VERSION 9.9.9 与 SKILL.md 1.0.0 不一致时必须报错")
+            messages = " ".join(item["message"] for item in report.errors)
+            self.assertIn("SKILL.md", messages)
+            self.assertIn("CHANGELOG", messages)
+        finally:
+            common.REPO_ROOT = original
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestReleaseNotes(unittest.TestCase):
+    def test_notes_include_install_block(self):
+        version = package.read_version()
+        text, ok = release_notes.notes(version)
+        self.assertTrue(ok, f"CHANGELOG 里没有 {version} 的段落")
+        self.assertIn(f"v{version}", text)
+        self.assertIn("koumaozi-{}.zip".format(version), text)
+        self.assertIn("sha256sum -c", text)
+        self.assertIn("skills/koumaozi", text)
+
+    def test_unknown_version_yields_nothing(self):
+        text, ok = release_notes.notes("0.0.1")
+        self.assertFalse(ok)
+        self.assertEqual(text, "")
+
+    def test_section_stops_at_next_heading(self):
+        sample = "# C\n\n## 2.0.0\n\n新东西\n\n### 细节\n\n- x\n\n## 1.0.0\n\n旧东西\n"
+        body = release_notes.section(sample, "2.0.0")
+        self.assertIn("新东西", body)
+        self.assertIn("### 细节", body)
+        self.assertNotIn("旧东西", body)
 
 
 if __name__ == "__main__":

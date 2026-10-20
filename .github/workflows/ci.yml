@@ -51,6 +51,12 @@ jobs:
         if: matrix.python == '3.13'
         run: python -W error::DeprecationWarning -m unittest discover -s tests
 
+      # 打包自检放在每次 push 上，而不是只在发版时跑：
+      # 产物坏了要在合并前就知道，别等打了 tag 才发现 dist 里少文件。
+      - name: 产物门禁（打包 + 解压自检，仅 3.12）
+        if: matrix.python == '3.12'
+        run: python scripts/package.py --verify
+
       - name: CLI 冒烟（扫描器）
         run: |
           python scripts/hat_scan.py --text "典型的带节奏，一条多少钱？" --json > /tmp/scan.json
