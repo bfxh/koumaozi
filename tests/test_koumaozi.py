@@ -846,6 +846,29 @@ class TestGate(unittest.TestCase):
                 self.assertNotIn(f"python scripts/{script}", workflow,
                                  f"{name} 里还在直接调 {script}，应当统一走 gate.py")
 
+    def test_gate_skips_when_needed_path_missing(self):
+        """安装包里没有 tests/，单测门禁要跳过而不是变红。
+
+        1.6.0 就是红在这——"目录不存在"被当成了"测试失败"，
+        用户装完一跑 gate 就以为代码坏了。
+        """
+        import io
+        from contextlib import redirect_stdout
+        original = gate.GATES
+        gate.GATES = [{"key": "fake", "name": "假门禁", "tier": "core",
+                       "argv": [sys.executable, "-c", "print('不该执行')"],
+                       "needs": [os.path.join(REPO_ROOT, "no-such-dir")],
+                       "protects": "", "hint": ""}]
+        try:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = gate.main(["--json"])
+        finally:
+            gate.GATES = original
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(code, 0, "缺依赖目录不该算失败")
+        self.assertIn("缺 ", payload["gates"][0]["skipped"])
+
     def test_markdown_table_is_written(self):
         import tempfile
         tmp = tempfile.mkdtemp(prefix="koumaozi-test-md-")

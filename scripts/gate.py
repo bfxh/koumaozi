@@ -28,6 +28,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SCRIPTS)
+# 安装包里不带 tests（用户不需要），编译和单测就只处理存在的目录，
+# 否则装好的 skill 一跑 gate 就红，而红的理由跟"代码有问题"毫无关系。
+_TEST_DIR = os.path.join(ROOT, "tests")
+_COMPILE_TARGETS = [SCRIPTS] + ([_TEST_DIR] if os.path.isdir(_TEST_DIR) else [])
 
 
 def py(script, *args):
@@ -40,9 +45,7 @@ GATES = [
         "key": "compile",
         "name": "语法编译",
         "tier": "core",
-        "argv": [sys.executable, "-m", "compileall", "-q",
-                 os.path.join(os.path.dirname(SCRIPTS), "scripts"),
-                 os.path.join(os.path.dirname(SCRIPTS), "tests")],
+        "argv": [sys.executable, "-m", "compileall", "-q"] + _COMPILE_TARGETS,
         "protects": "脚本有语法错误，任何功能都无从谈起",
         "hint": "compileall 只查语法，查不出 NameError——新增正则/变量后要真跑一次脚本",
     },
@@ -77,8 +80,9 @@ GATES = [
         "key": "unit",
         "name": "单元测试",
         "tier": "core",
-        "argv": [sys.executable, "-m", "unittest", "discover",
-                 "-s", os.path.join(os.path.dirname(SCRIPTS), "tests")],
+        "argv": [sys.executable, "-m", "unittest", "discover", "-s", _TEST_DIR],
+        # 安装包里没有 tests/，这道门禁就地跳过——不是失败，是不适用
+        "needs": [_TEST_DIR],
         # 这条测试和 docs 门禁重复（都是把 29 条命令跑一遍，占 12s），
         # gate 里由 docs 单独覆盖；直接跑 unittest 时仍然生效
         "env": {"KOUMAOZI_SKIP_DOC_SMOKE": "1"},
@@ -148,7 +152,9 @@ def write_markdown(path, version, rows, total):
     lines.append("|---|---|---|---|")
     for row in rows:
         mark = "✅" if row["passed"] else "❌"
-        detail = (row["detail"] or "").replace("|", "/")
+        if row.get("skipped"):
+            mark = "⏭"
+        detail = (row.get("skipped") or row["detail"] or "").replace("|", "/")
         lines.append(f"| `{row['key']}` {row['name']} | {mark} | {row['seconds']}s | {detail} |")
     body = "\n".join(lines) + "\n"
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -239,6 +245,15 @@ def main(argv=None):
 
     rows = []
     for gate in gates:
+        missing = [path for path in gate.get("needs", []) if not os.path.exists(path)]
+        if missing:
+            rows.append({
+                "key": gate["key"], "name": gate["name"], "passed": True,
+                "seconds": 0.0, "skipped": "缺 " + ", ".join(
+                    os.path.basename(path) for path in missing) + "/（安装包不带）",
+                "detail": "", "problems": [], "returns": 0,
+            })
+            continue
         row = run_gate(gate)
         rows.append(row)
         if not row["passed"]:
@@ -265,6 +280,9 @@ def main(argv=None):
     print(f"扣帽子工程 门禁  v{version}")
     print("-" * 66)
     for row in rows:
+        if row.get("skipped"):
+            print(f"SKIP  {row['name']:<8} {'-':>6}   {row['skipped']}")
+            continue
         mark = "PASS" if row["passed"] else "FAIL"
         detail = f"  {row['detail']}" if row["detail"] else ""
         print(f"{mark}  {row['name']:<8} {row['seconds']:>6.2f}s{detail}")
