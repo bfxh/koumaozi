@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# 同一分支上后一次推送直接作废前一次还在跑的矩阵，别拿三版本算力排队
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gates:
     name: py${{ matrix.python }}
@@ -19,9 +24,9 @@ jobs:
         python: ["3.9", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
 
