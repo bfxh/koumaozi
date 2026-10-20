@@ -1,7 +1,7 @@
 ---
 name: "koumaozi"
 description: "扣帽子工程：识别、拆解、反制与生成中文语境下的标签化攻击。当文本出现人身定性、动机揣测、上纲上线、群体污名、道德审判等表达，或用户要求'看看这段话哪里在扣帽子''帮我拆一下这个回复''生成带帽子的短评''这篇评论是不是在带节奏''这段连招怎么拆''我改完之后好点了吗'时调用。内置 55 个帽子词条、24 式攻击句式、10 条固定连招、8 大帽子家族、55 条带覆盖门禁的回归语料（含 8 条引用/否认语境样本），附带可执行的扫描器/生成器/改稿对比工具（Python 标准库零依赖）。输出前必须叠加 anti-ai-flavor 去掉 AI 腔。"
-version: "1.7.0"
+version: "1.8.0"
 ---
 
 # 扣帽子工程 (Koumaozi)
@@ -321,6 +321,8 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 | `scripts/verify_data.py` | 数据与仓库一致性门禁（含版本三处同步） | `--json` |
 | `scripts/wordcount.py` | 内容量统计 | `--min`、`--json` |
 | `scripts/package.py` | 打包 skill 包并自检（解压后验证，不验源目录）；`--check-dir` 核对已装目录 | `--verify`、`--check-dir`、`--out`、`--keep` |
+| `scripts/build_web.py` | 从 `data/` 生成网页端规则文件 `docs/rules.js`（派生物，勿手改） | `--check`、`--out` |
+| `scripts/web_parity.py` | 网页端与 Python 端逐条对拍（字数/分数/命中数/每条命中的类型、编号、片段、严重度、角色） | `--json`、`--verbose` |
 | `scripts/release_notes.py` | 从 CHANGELOG 抽发版说明 | `--version`、`--out`、`--section-only` |
 | `scripts/install.sh` / `install.ps1` | 安装到 skill 目录（含开发态软链/Junction）；`--check` 只查不装 | `--version`、`--from`、`--from-dir`、`--target`、`--check` |
 
@@ -348,7 +350,7 @@ python3 scripts/hat_diff.py --before examples/a.md --after examples/b.md --must-
 
 ## 质量门禁
 
-八道门禁定义在 `scripts/gate.py` 一处，本地和 CI 跑同一套：
+九道门禁定义在 `scripts/gate.py` 一处，本地和 CI 跑同一套：
 
 ```bash
 python3 scripts/gate.py --list      # 有哪些门禁
@@ -365,6 +367,7 @@ python3 scripts/gate.py --tier core # 只跑核心（约 6s）
 | `unit` | 扫描器正反例、连招检测、生成器可复现、diff 方向，外加性能门禁（长文/超长单句/高命中密度必须线性时间，防正则回溯爆炸）；`install --check` 在两平台上的版本比较与完整性核对 |
 | `docs` | 文档命令示例照抄能不能跑、`--json` 真是 JSON、引用的样例文件真存在 |
 | `cli` | 四个命令的端到端形状：扫描有命中、连招三段、改稿门禁能拦恶化 |
+| `web` | 网页端（`docs/`）的规则文件是否还与 `data/` 同步、浏览器端判定与 `hat_scan.py` 是否逐条一致——两边不一致不会报错，只会让网页给出错的结论 |
 | `package` | 发出去的包齐不齐、能不能跑（解压后验证，不验源目录） |
 
 **收进一个入口的理由**：门禁散在 workflow 里，本地要自己记顺序，CI 和本地各写一份，改一边忘另一边就是"本地绿、CI 红"。现在 `ci.yml` / `release.yml` 只决定哪个 Python 版本跑哪一层，集合不再重复列举；有测试专门盯着这一点。

@@ -106,6 +106,20 @@ GATES = [
         "hint": "断言在 scripts/cli_smoke.py 里，改 CLI 参数时同步改它",
     },
     {
+        "key": "web",
+        "name": "网页端对拍",
+        "tier": "full",
+        "argv": py("web_parity.py"),
+        # 安装包不带 docs/（网页是仓库的交付物，不是 skill 的一部分），
+        # 那道门禁就地跳过——不是失败，是不适用
+        "needs": [os.path.join(ROOT, "docs")],
+        # 规则文件是 data/ 的派生物；判定逻辑在 JS 里重写了一遍
+        "protects": "网页用的是旧规则，或 JS 与 Python 判得不一样——两者都不报错，"
+                    "只是网页给出的结论不可信",
+        "hint": "改过 data/ 或 common.py 就先跑 build_web.py 重新生成；"
+                "对拍报某个 CRP-xx 的「命中明细」不同，去 diff docs/scan.js 与 hat_scan.py",
+    },
+    {
         "key": "package",
         "name": "产物",
         "tier": "full",
@@ -170,7 +184,7 @@ def summarize(stdout):
         if line.startswith("Ran "):
             return line.split(" in ")[0]
     for line in lines:
-        if line.startswith(("检查项", "语料 ", "文档命令", "CLI 冒烟", "自检 ", "中文合计")):
+        if line.startswith(("检查项", "语料 ", "文档命令", "CLI 冒烟", "自检 ", "中文合计", "网页端对拍")):
             return line
     for line in reversed(lines):
         if line in ("通过", "OK") or line.startswith("失败"):

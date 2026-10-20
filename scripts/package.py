@@ -42,13 +42,8 @@ VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def read_version(root=None):
-    root = root or common.REPO_ROOT
-    path = os.path.join(root, "VERSION")
-    with open(path, "r", encoding="utf-8") as fh:
-        value = fh.read().strip()
-    if not VERSION_RE.match(value):
-        raise ValueError(f"VERSION 不是语义化版本号: {value!r}")
-    return value
+    """版本号在 common 里只有一份实现，这里只是保住老调用点。"""
+    return common.read_version(root)
 
 
 def sha256_of(path):
@@ -150,11 +145,15 @@ def extract(zip_path, dest):
 
 
 def check_contents(dest, manifest):
-    """清单必须双向对得上：声明的一个不少，磁盘上的一个不多。"""
+    """清单必须双向对得上：声明的一个不少，磁盘上的一个不多。
+
+    但不该把"打包产生的临时物"算进去：装好之后有人在那个目录里跑一次
+    `package.py` 就会多出 dist/，那不是安装被人动过。
+    """
     problems = []
     on_disk = set()
     for current, dirs, files in os.walk(dest):
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        dirs[:] = [d for d in dirs if d not in SKIP_NAMES]
         for filename in files:
             if filename == MANIFEST_NAME or filename.endswith(SKIP_SUFFIXES):
                 continue

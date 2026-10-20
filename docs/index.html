@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扣帽子工程 · 在线扫描</title>
+<meta name="description" content="粘贴一段中文文本，看它在扣什么帽子：标签、攻击句式、连招，以及每处的反制说法。全部在浏览器本地运行，文本不上传。">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --ink: #1c1b19;
+    --ink-soft: #5c5952;
+    --ink-faint: #8d8880;
+    --line: #e2ded6;
+    --accent: #8a2f2a;
+    --accent-soft: #f7e9e7;
+    --warn: #a8620d;
+    --warn-soft: #fbf0dc;
+    --info: #2f5d8a;
+    --info-soft: #e8f0f8;
+    --muted-soft: #ecebe6;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171614;
+      --panel: #201f1c;
+      --ink: #f0ede6;
+      --ink-soft: #b8b3a8;
+      --ink-faint: #8b857a;
+      --line: #33312c;
+      --accent: #e0857c;
+      --accent-soft: #3a2320;
+      --warn: #d9a05a;
+      --warn-soft: #38290f;
+      --info: #85aed6;
+      --info-soft: #1b2a3a;
+      --muted-soft: #2a2824;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+  a:hover { opacity: .75; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 72px; }
+
+  header.site { border-bottom: 1px solid var(--line); padding-bottom: 18px; margin-bottom: 24px; }
+  header.site h1 { font-size: 25px; margin: 0 0 6px; letter-spacing: .5px; }
+  header.site p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  header.site .meta { margin-top: 8px; font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+
+  .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+  @media (min-width: 900px) {
+    .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); align-items: start; }
+    /* 长文本往下滚的时候分数还看得见，不用来回翻 */
+    #result { position: sticky; top: 20px; }
+  }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .card h2 { font-size: 13px; margin: 0 0 10px; color: var(--ink-faint); font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
+
+  textarea {
+    width: 100%; min-height: 240px; resize: vertical; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg); color: var(--ink);
+    font-family: inherit; font-size: 15px; line-height: 1.75;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .samples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chip {
+    font: inherit; font-size: 13px; padding: 5px 11px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 999px;
+    background: var(--panel); color: var(--ink-soft);
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+  .toolbar button {
+    font: inherit; font-family: inherit; background: none; border: none; color: var(--ink-soft);
+    cursor: pointer; padding: 2px 4px; border-bottom: 1px dotted var(--ink-faint);
+  }
+
+  .score { display: flex; align-items: baseline; gap: 12px; }
+  .score b { font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  .score span { font-size: 12px; color: var(--ink-faint); }
+  .verdict { margin-top: 8px; font-size: 14px; color: var(--ink-soft); }
+  .counts { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 14px 0 0; }
+  .counts li { font-size: 12px; font-family: var(--mono); padding: 3px 8px; border-radius: 6px; background: var(--muted-soft); color: var(--ink-soft); }
+  .bar { height: 4px; border-radius: 2px; background: var(--muted-soft); overflow: hidden; margin-top: 14px; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .18s ease; }
+
+  ol.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  ol.findings li { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--bg); }
+  .fhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .tag { font-size: 11px; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; border: 1px solid transparent; white-space: nowrap; }
+  .tag.critical { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .tag.warning { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+  .tag.info { background: var(--info-soft); color: var(--info); border-color: var(--info); }
+  .tag.role { background: var(--muted-soft); color: var(--ink-soft); }
+  .fid { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .fname { font-weight: 600; font-size: 15px; }
+  .fdetail { margin-top: 6px; font-size: 13px; color: var(--ink-soft); }
+  .fdetail b { color: var(--ink); font-weight: 600; }
+  .ffix { margin-top: 6px; font-size: 13px; color: var(--ink-soft); }
+  .ffix::before { content: "反制 "; font-size: 11px; color: var(--ink-faint); letter-spacing: 1px; }
+
+  .highlight { margin-top: 24px; }
+  .highlight pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-family: inherit; font-size: 15px; line-height: 1.9; color: var(--ink);
+  }
+  mark { background: var(--accent-soft); color: var(--accent); padding: 0 1px; border-radius: 3px; }
+  mark.soft { background: var(--muted-soft); color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-faint); margin-top: 10px; }
+  .legend span::before { content: "■ "; font-size: 10px; }
+  .legend .l-used::before { color: var(--accent); }
+  .legend .l-soft::before { color: var(--ink-faint); }
+
+  .empty { color: var(--ink-faint); font-size: 13px; padding: 10px 0; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-faint); }
+  footer code { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="site">
+    <h1>扣帽子工程 · 在线扫描</h1>
+    <p>粘贴一段中文文本，看它在扣什么帽子：用了哪个标签、哪一式攻击句式、有没有走成连招，每处该怎么反制。</p>
+    <p class="meta" id="meta">载入规则…</p>
+  </header>
+
+  <div class="grid">
+    <section class="card" aria-label="输入">
+      <h2>文本</h2>
+      <div class="samples" id="samples"></div>
+      <label class="sr" for="text">要分析的文本</label>
+      <textarea id="text" placeholder="把一段评论、一条回复、一篇稿子贴进来…"></textarea>
+      <div class="toolbar">
+        <span id="counter">0 字</span>
+        <button type="button" id="clear">清空</button>
+      </div>
+    </section>
+
+    <section class="card" aria-label="结果" id="result">
+      <h2>结果</h2>
+      <div class="score">
+        <b id="score">—</b>
+        <span>标签分 / 100</span>
+      </div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="verdict" id="verdict">还没有输入。</div>
+      <ul class="counts" id="counts"></ul>
+    </section>
+  </div>
+
+  <section class="card highlight" aria-label="命中位置">
+    <h2>命中位置</h2>
+    <pre id="markup" class="empty">贴一段文本，这里会把命中的地方标出来。</pre>
+    <div class="legend">
+      <span class="l-used">正在使用（计入得分）</span>
+      <span class="l-soft">被否认 / 被引用（已降级，不计入得分）</span>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:20px" aria-label="命中明细">
+    <h2>命中明细</h2>
+    <ol class="findings" id="findings"><li class="empty" style="border:none;background:none;padding:0">暂无命中。</li></ol>
+  </section>
+
+  <footer>
+    <p>全部在浏览器本地运行，文本不会上传到任何地方。规则来自仓库里的 <code>data/*.json</code>，
+      判定逻辑与命令行版 <code>hat_scan.py</code> 逐条对拍（分数、命中、严重度、角色四项必须一致），
+      分叉会被 CI 拦住。</p>
+    <p>命令行版、连招生成、改稿对比在仓库里：<a href="https://github.com/bfxh/koumaozi">bfxh/koumaozi</a>。
+      本页扫的是"文本里有没有在扣"，不是"谁对谁错"——扣帽子成立与否，与观点真假无关。</p>
+  </footer>
+</div>
+
+<script src="rules.js"></script>
+<script src="scan.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

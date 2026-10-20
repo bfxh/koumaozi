@@ -18,6 +18,14 @@
 
 **这就是帽子。** 它不反驳你，它取消你。本仓库把这类操作拆成 55 顶帽子、24 式句式、8 个家族，每一顶都给出识别特征、破解入口、以及"什么时候这顶帽子会失效"。
 
+## 在线试用
+
+不想装也能先看效果：**<https://bfxh.github.io/koumaozi/>**
+
+粘贴一段文本，页面直接给出标签分、用到哪顶帽子/哪一式句式、有没有走成连招、每处该怎么反制，并把命中的地方在原文里标出来。全部在浏览器本地跑，文本不上传。
+
+网页端是第二份实现（静态页没有后端，规则只能在浏览器里跑），所以它的判定要和命令行版**逐条对拍**：55 条回归语料 + 文档样例 + 若干刁钻输入，字数、标签分、各类命中数、每条命中的类型/编号/片段/严重度/角色，六项必须一致，不一致 CI 就红。规则数据也不是手抄的，由 `scripts/build_web.py` 从 `data/*.json` 生成，改了数据忘了重新生成同样会被拦住。
+
 ## 安装
 
 两种方式，都不需要 clone 仓库。
@@ -127,6 +135,11 @@ koumaozi/
 │   ├── draft.md  draft-v1.md  draft-v2.md
 │   ├── a.md  b.md  reply.md
 │   └── notes/comment-01.md  notes/comment-02.md
+├── docs/                             网页端（GitHub Pages，开链接即用）
+│   ├── index.html                    扫描页：粘贴文本，出分数、命中与反制
+│   ├── scan.js                       浏览器端扫描器（判定与 hat_scan.py 对拍）
+│   ├── app.js                        页面逻辑（不含判定，判定全在 scan.js）
+│   └── rules.js                      由 build_web.py 生成，勿手改
 ├── scripts/
 │   ├── common.py                     数据加载、分句、角色判定、编码兜底
 │   ├── hat_scan.py                   扫描器（帽子 / 句式 / 连招 / 否认降级）
@@ -136,6 +149,9 @@ koumaozi/
 │   ├── gate.py                       统一门禁入口（本地与 CI 共用同一套）
 │   ├── doc_smoke.py                  文档即测试：把文档里的命令全跑一遍
 │   ├── cli_smoke.py                  CLI 端到端冒烟（从 ci.yml 挪进来的）
+│   ├── build_web.py                  生成网页端规则文件（--check 供门禁用）
+│   ├── web_parity.py                 网页端与 Python 端逐条对拍
+│   ├── web_parity_runner.js          对拍的 node 侧入口
 │   ├── verify_data.py                一致性门禁（含版本同步）
 │   ├── wordcount.py                  内容量门禁
 │   ├── package.py                    打包 + 产物自检（解压后验证，不验源目录）
@@ -144,7 +160,8 @@ koumaozi/
 │   └── install.ps1                   安装（Windows，Junction 支持开发态）
 ├── .github/workflows/
 │   ├── ci.yml                        门禁 × py3.9/3.12/3.13
-│   └── release.yml                   打 tag 发版：门禁 → 打包自检 → 装一遍 → 发布 → 回收复检
+│   ├── release.yml                   打 tag 发版：门禁 → 打包自检 → 装一遍 → 发布 → 回收复检
+│   └── pages.yml                     发布 docs/ 到 Pages（发布前先对拍）
 └── tests/test_koumaozi.py            门禁测试
 ```
 
@@ -205,7 +222,7 @@ AI 写的帽子 100% 有 AI 味，因为它倾向于把攻击写得"完整"—�
 
 ## 质量门禁
 
-八道门禁定义在 `scripts/gate.py` **一处**，本地和 CI 跑同一套：
+九道门禁定义在 `scripts/gate.py` **一处**，本地和 CI 跑同一套：
 
 ```bash
 python3 scripts/gate.py              # 全量，一次跑完再看结论
@@ -224,6 +241,7 @@ python3 scripts/gate.py --only data,corpus
 | `unit` | 单元测试 | 扫描器正反例、连招检测、生成器可复现、diff 方向、性能（防正则回溯爆炸）、`install --check` 两平台的版本比较与完整性核对 |
 | `docs` | 文档命令 | 文档里的命令示例照抄能不能跑 |
 | `cli` | CLI 冒烟 | 四个命令的端到端形状：扫描有命中、连招三段结构、改稿门禁能拦恶化 |
+| `web` | 网页端对拍 | 网页用的是旧规则，或浏览器端与 Python 端判得不一样——两者都不报错，只是网页结论不可信 |
 | `package` | 产物 | 发出去的包齐不齐、能不能跑（解压后验证） |
 
 **为什么收进一个入口**：门禁散在 workflow 里有两个老问题——本地要自己记顺序，记错就得到假结果；CI 和本地各写一份，改了一边忘另一边，就出现"本地绿、CI 红"。现在 `ci.yml` / `release.yml` 只负责"在哪个 Python 版本上跑哪一层"，具体集合不再重复列举。有一条测试专门盯着这件事（`test_workflows_go_through_single_entry`），谁在 yml 里再抄一遍脚本名，CI 就红。
