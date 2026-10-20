@@ -4,3 +4,4 @@ __pycache__/
 report.json
 *.egg-info/
 .venv/
+dist/

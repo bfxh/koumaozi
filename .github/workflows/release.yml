@@ -1,0 +1,130 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 打包 · 自检 · 发布
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gh release create --verify-tag 要 tag 在远端，checkout 也要能拿到它
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # tag 指向的 commit 很可能从没被 ci.yml 跑过（打 tag 不等于推 main），
+      # 所以这里不能假设"CI 已经验过了"，必须自己再验一遍。
+      - name: tag 与 VERSION 一致
+        run: |
+          version="$(cat VERSION)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "VERSION 是 $version，tag 是 $GITHUB_REF_NAME，对不上" >&2
+            echo "发版请先改 VERSION 再打同名 tag" >&2
+            exit 1
+          fi
+          echo "版本 $version 已确认"
+
+      - name: 全量门禁
+        run: |
+          python -m compileall -q scripts tests
+          python scripts/verify_data.py
+          python scripts/wordcount.py --min 10000
+          python scripts/corpus_check.py
+          python -m unittest discover -s tests
+
+      # 打包自检验的是"解压后的产物"，不是源目录。
+      # 光验源码是假 CD：少打一个 data 文件照样一路绿，用户装上去当场报错。
+      - name: 打包 + 产物自检
+        run: python scripts/package.py --verify
+
+      # 包能跑不等于装完能用。安装脚本真装一遍，再用装好的路径扫一次。
+      - name: 安装脚本端到端
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          mkdir -p "$HOME"
+          bash scripts/install.sh --from dist/koumaozi-*.zip -y
+          python "$HOME/.workbuddy/skills/koumaozi/scripts/hat_scan.py" \
+            --text "典型的带节奏，一条多少钱？" --json > installed-scan.json
+          python - <<'PY'
+          import json
+          summary = json.load(open("installed-scan.json", encoding="utf-8"))["summary"]
+          assert summary["hat_hits"] >= 1, summary
+          assert summary["pattern_hits"] >= 1, summary
+          print("装完之后扫得出东西:", summary)
+          PY
+
+      - name: 生成 Release 说明
+        run: python scripts/release_notes.py --out NOTES.md
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/koumaozi-*.zip dist/koumaozi-*.zip.sha256 \
+            --verify-tag \
+            --title "扣帽子工程 $GITHUB_REF_NAME" \
+            --notes-file NOTES.md
+
+      # 发布完成不等于交付对。把上传的资产拉回来，重新比对 sha256——
+      # 这一步才能排除"本地验的是 A，发出去的是 B"。
+      - name: 发布后回收复检
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p downloaded
+          gh release download "$GITHUB_REF_NAME" --dir downloaded
+          cd downloaded
+          ls -l
+          sha256sum -c *.sha256
+          cd ..
+          python - <<'PY'
+          import glob, json, os, hashlib
+          local = glob.glob("dist/koumaozi-*.zip")[0]
+          remote = glob.glob("downloaded/koumaozi-*.zip")[0]
+          def digest(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1 << 16), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+          assert digest(local) == digest(remote), "发布出去的包与本地验过的包不一致"
+          print("回收复检通过:", os.path.basename(remote), digest(remote))
+          PY
+
+      - name: 摘要
+        run: |
+          {
+            echo "### 发布 $GITHUB_REF_NAME"
+            echo ""
+            echo '```'
+            cat dist/*.sha256
+            echo '```'
+            echo ""
+            echo "安装：\`bash scripts/install.sh\` 或 \`scripts/install.ps1\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 失败时保留产物
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: koumaozi-dist-${{ github.ref_name }}
+          path: |
+            dist/
+            NOTES.md
+          if-no-files-found: ignore
