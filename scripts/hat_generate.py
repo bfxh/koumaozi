@@ -108,6 +108,16 @@ def pick_hats(args, rng):
     return pool[: max(1, args.count)]
 
 
+def hat_templates(pattern):
+    """含 {帽子} 槽位的模板。生成首选这些。
+
+    句式模板原来大多只有"纯句式"（「{对象}也配谈这事？」），帽子词根本不进正文，
+    于是 `--hat 巨婴` 生成的句子里没有"巨婴"这回事——165 条产出里有 144 条
+    连自己的扫描器都认不出。帽子是弹药、句式是枪，但枪里得有弹。
+    """
+    return [text for text in pattern["template"] if "{帽子}" in text]
+
+
 def pick_pattern(hat, patterns, args, rng):
     if args.pattern:
         for pattern in patterns:
@@ -115,7 +125,10 @@ def pick_pattern(hat, patterns, args, rng):
                 return pattern
         raise SystemExit(f"未知句式: {args.pattern}")
     same_family = [p for p in patterns if p.get("family_hint") == hat["family"]]
-    return rng.choice(same_family or patterns)
+    pool = same_family or patterns
+    # 优先挑真能把帽子写进正文的句式，否则 --hat 指定的帽子只出现在元数据里
+    with_hat = [p for p in pool if hat_templates(p)]
+    return rng.choice(with_hat or pool)
 
 
 def fill(template, slots):
@@ -155,7 +168,7 @@ def generate(args):
         attempts += 1
         hat = hats[len(results) % len(hats)]
         pattern = pick_pattern(hat, patterns, args, rng)
-        template = rng.choice(pattern["template"])
+        template = rng.choice(hat_templates(pattern) or pattern["template"])
         local_slots = dict(slots)
         local_slots["帽子"] = hat["name"]
         text, missing = fill(template, local_slots)
@@ -238,11 +251,13 @@ def generate_combo(args):
             anchor_family = hat["family"]
         if pattern is None:
             pool = [p for p in patterns.values() if p.get("family_hint") == hat["family"]]
-            pattern = rng.choice(pool or list(patterns.values()))
+            pool = pool or list(patterns.values())
+            with_hat = [p for p in pool if hat_templates(p)]
+            pattern = rng.choice(with_hat or pool)
 
         local = dict(slots)
         local["帽子"] = hat["name"]
-        text, missing = fill(rng.choice(pattern["template"]), local)
+        text, missing = fill(rng.choice(hat_templates(pattern) or pattern["template"]), local)
         if text is None:
             raise SystemExit(f"连招第 {index} 环槽位无法填充: {missing}")
 

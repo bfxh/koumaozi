@@ -314,6 +314,53 @@ class TestGenerator(unittest.TestCase):
         with self.assertRaises(SystemExit):
             hat_generate.main(["--target", "x", "--hat", "不存在的帽子"])
 
+    def test_every_pattern_can_carry_a_hat(self):
+        """每个句式至少有一条模板把 {帽子} 写进正文。
+
+        原来是 24 条句式里 23 条的模板压根没有 {帽子} 槽位，于是 `--hat 巨婴`
+        生成出来的句子是「某方案也配谈这事？」——句子里根本没有"巨婴"。
+        帽子只出现在元数据和破解要点里，正文跟指定帽子无关。
+        """
+        missing = [p["id"] for p in common.load_patterns()["patterns"]
+                   if not hat_generate.hat_templates(p)]
+        self.assertEqual(missing, [], f"这些句式的模板写不进帽子: {missing}")
+
+    def test_generated_text_is_recognized_by_own_scanner(self):
+        """生成 → 识别 的闭环：产出必须能被自己的扫描器认出指定帽子。
+
+        这是生成器唯一说得清的自我检验。原状态下 165 条产出里 144 条认不出
+        （87%）——生成器声称"生成带某顶帽子的短评"，实际只生成了句式。
+        两边对"帽子"的理解一旦分叉，用户拿到的就是一堆没有帽子的句子。
+
+        每顶帽子取 3 条而不是 1 条：count=1 时只看第一次随机结果，模板里只要
+        有一条能写进帽子就可能蒙混过关（变异验证时确实没红过），那不叫门禁。
+        """
+        compiled = hat_scan.compile_patterns()
+        bad = []
+        for hat in common.flatten_hats():
+            _, out = self.capture(["--target", "某方案", "--hat", hat["name"],
+                                   "--count", "3", "--json", "--seed", "1"])
+            for item in json.loads(out)["results"]:
+                findings, _ = hat_scan.scan_text("<gen>", item["text"], compiled)
+                used = {f["pattern_id"] for f in findings if f.get("role", "used") == "used"}
+                if hat["id"] not in used:
+                    bad.append((hat["id"], item["text"]))
+        self.assertEqual(bad, [], f"{len(bad)} 条产出认不出自己的帽子: {bad[:5]}")
+
+    def test_default_mode_output_is_recognized(self):
+        """不带 --hat、随机挑帽子的默认路径也要闭环。"""
+        compiled = hat_scan.compile_patterns()
+        bad = []
+        for seed in range(1, 4):
+            _, out = self.capture(["--target", "某方案", "--count", "8",
+                                   "--json", "--seed", str(seed)])
+            for item in json.loads(out)["results"]:
+                findings, _ = hat_scan.scan_text("<gen>", item["text"], compiled)
+                used = {f["pattern_id"] for f in findings if f.get("role", "used") == "used"}
+                if item["hat"]["id"] not in used:
+                    bad.append((item["hat"]["id"], item["text"]))
+        self.assertEqual(bad, [], f"默认模式有 {len(bad)} 条认不出: {bad[:5]}")
+
 
 class TestComboGenerate(unittest.TestCase):
     def capture(self, argv):
@@ -340,6 +387,24 @@ class TestComboGenerate(unittest.TestCase):
         self.assertEqual(payload["break_at"], "PAT-17")
         self.assertGreaterEqual(len(payload["break_steps"]), 2)
         self.assertTrue(payload["fail_mode"])
+
+    def test_every_combo_step_is_recognized(self):
+        """连招每一环的帽子都要能被扫描器认出来，跟单条生成同一个要求。
+
+        连招是"多顶帽子按顺序打"，如果某一环的句子根本不含那顶帽子，
+        拆解示范就变成了拆一个不存在的动作。
+        """
+        compiled = hat_scan.compile_patterns()
+        bad = []
+        for combo in common.load_combos()["combos"]:
+            _, out = self.capture(["--target", "某博主", "--combo", combo["id"],
+                                   "--json", "--seed", "1"])
+            for step in json.loads(out)["steps"]:
+                findings, _ = hat_scan.scan_text("<combo>", step["text"], compiled)
+                used = {f["pattern_id"] for f in findings if f.get("role", "used") == "used"}
+                if step["hat"]["id"] not in used:
+                    bad.append((combo["id"], step["stage"], step["hat"]["id"], step["text"]))
+        self.assertEqual(bad, [], f"连招里有 {len(bad)} 环认不出自己的帽子: {bad[:5]}")
 
     def test_combo_punctuation(self):
         _, out = self.capture(["--target", "某人", "--combo", "CMB-01", "--json", "--seed", "3"])
