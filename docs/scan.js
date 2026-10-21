@@ -27,6 +27,9 @@
   var NEGATION_PREFIXES = RULES.negationPrefixes;
   var META_PREFIXES = RULES.metaPrefixes;
   var QUOTE_PAIRS = RULES.quotePairs;
+  var STRAIGHT_QUOTES = RULES.straightQuotes;
+  var RHETORICAL_SUBJECTS = RULES.rhetoricalSubjects;
+  var CLAUSE_BREAKS = RULES.clauseBreaks;
   var W = RULES.windows;
   var REVERSAL_RE = /(?:是什么|是啥|是哪种|吗|嘛|呢|[?？])/;
   var SENTENCE_CHARS = "。！？；!?;";
@@ -114,15 +117,56 @@
     return false;
   }
 
+  function anyCharIn(text, marks) {
+    for (var i = 0; i < marks.length; i++) {
+      if (text.indexOf(marks[i]) >= 0) { return true; }
+    }
+    return false;
+  }
+
+  // 截到第一个断句标点之前。反问标记必须和被否定的那个词同处一句：
+  // 「我不是公知，这不是明摆着的吗」右边确实有"吗"，但那是下一分句，
+  // "我不是公知"本身是清楚的否认。不截断就会把它翻成"正在使用"。
+  function cutAtBreak(text) {
+    var cut = text.length;
+    for (var i = 0; i < CLAUSE_BREAKS.length; i++) {
+      var at = text.indexOf(CLAUSE_BREAKS[i]);
+      if (at >= 0 && at < cut) { cut = at; }
+    }
+    return text.slice(0, cut);
+  }
+
+  // 「这不是…X…吗」：形式带否定词，功能是定性。只看紧邻的"不是"不够——
+  // 「这不是典型的公知话术吗」中间隔了四个字。但也不能一律放宽：
+  // 「我不是公知，这不是明摆着的吗」的主语是第一人称，讲的是否认。
+  function rhetoricalFrame(text, start, end) {
+    var tail = text.slice(Math.max(0, start - 12), start);
+    var pos = tail.lastIndexOf("不是");
+    if (pos < 0) { return false; }
+    var subject = tail.slice(Math.max(0, pos - 3), pos);
+    var matched = false;
+    for (var i = 0; i < RHETORICAL_SUBJECTS.length; i++) {
+      if (subject.indexOf(RHETORICAL_SUBJECTS[i]) >= 0) { matched = true; break; }
+    }
+    if (!matched) { return false; }
+    var between = tail.slice(pos + 2);
+    if (anyCharIn(between, CLAUSE_BREAKS)) { return false; }
+    return REVERSAL_RE.test(cutAtBreak(text.slice(end, end + W.roleRight)));
+  }
+
   function contextRole(text, start, end) {
     var left = text.slice(Math.max(0, start - W.role), start);
-    var right = text.slice(end, end + W.roleRight);
+    var right = cutAtBreak(text.slice(end, end + W.roleRight));
 
     // "这不是 X 是什么？"是反问式定性，不是在否认——必须先排除，否则最典型的
     // 扣帽子句式会被判成否认句，一降级就等于放过。
     if (/(?:不是|不属于|不像)$/.test(left.replace(/\s+$/, "")) && REVERSAL_RE.test(right)) {
       return "used";
     }
+    if (rhetoricalFrame(text, start, end)) { return "used"; }
+    // 紧邻的否定：反问标记没出现时，"这不像 X""这不属于 X" 就是明确的否认。
+    // 只在紧邻时生效——"不像话，这就是 X" 里的"不像"隔着一个词，不能算。
+    if (/(?:不属于|不像)$/.test(left.replace(/\s+$/, ""))) { return "denied"; }
     if (containsAny(left, NEGATION_PREFIXES)) { return "denied"; }
     if (containsAny(left, META_PREFIXES)) { return "quoted"; }
     var prefix = text.slice(0, start);
@@ -131,7 +175,9 @@
         return "quoted";
       }
     }
-    if (countOccurrences(prefix, '"') % 2 === 1) { return "quoted"; }
+    for (var k = 0; k < STRAIGHT_QUOTES.length; k++) {
+      if (countOccurrences(prefix, STRAIGHT_QUOTES[k]) % 2 === 1) { return "quoted"; }
+    }
     return "used";
   }
 

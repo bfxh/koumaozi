@@ -13,7 +13,28 @@ DATA_DIR = os.path.join(REPO_ROOT, "data")
 HAT_RE = re.compile(r"^HAT-F[1-8]-\d{2}$")
 PATTERN_RE = re.compile(r"^PAT-\d{2}$")
 COMBO_RE = re.compile(r"^CMB-\d{2}$")
-CORPUS_RE = re.compile(r"^CRP-\d{2}$")
+CORPUS_RE = re.compile(r"^CRP-\d{2,3}$")
+
+# 语料模拟的"野外特征"。语料的价值不在于条数，而在于它长得像不像真实评论区：
+# 教科书式的完整句子永远测不出漏检和误伤。给每条语料标上它模拟了什么特征，
+# "像不像"就变成可检查的东西——每个特征都必须至少有一条语料在用。
+CORPUS_TRAITS = {
+    "colloquial": "口语插入语、省略主语、语气词",
+    "no-punct": "句内无标点连写",
+    "homophone": "谐音或形近规避（公蜘）",
+    "repeat": "叠字或重复施压（双标双标双标）",
+    "rhetorical": "反问式定性（这不是…吗）",
+    "mixed": "同一句叠加多顶帽子 / 多个句式",
+    "long": "长段落里帽子只占一句，其余是事实陈述",
+    "single-quote": "单引号标记「提到某个词」",
+    "quotative": "转述他人指控（说我 / 被指 / 骂我）",
+    "denial": "明确自辩否认（我没收钱）",
+    "emoji": "表情符与帽子里外交替出现",
+}
+
+# 这几个特征缺一条，"语料像真实评论区"就退化成口号了。
+REQUIRED_TRAITS = ("colloquial", "no-punct", "homophone", "repeat", "rhetorical",
+                   "mixed", "long", "single-quote", "quotative", "denial", "emoji")
 
 # 强化词：出现在帽子/句式命中句附近时，说明不只是"提到"，而是在"使用"
 AMPLIFIERS = (
@@ -194,12 +215,58 @@ META_PREFIXES = (
     # 存疑指控 / 转述他人指控："同事质疑对方收钱"是记录别人的怀疑，不是本人在断言。
     # 代价是"我质疑你收钱"也会降一级——可接受：把怀疑说成怀疑，本来就比直接定性弱。
     "质疑", "怀疑", "指责", "控诉", "追责",
+    # 被动式转述："该账号被指收钱发帖"是复述他人的指控，跟"他就是收钱的"不是一回事。
+    "被指", "被质疑",
+    # 劝阻句式："别动不动就说别人是带节奏"——这句话在反对贴标签，不是在使用标签。
+    "说别人是", "说人家是",
 )
 
-QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"), ("《", "》"))
+QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"), ("《", "》"), ("‘", "’"))
+
+# 单字符成对的引号（直引号）：靠奇偶判断"命中处是否在一对引号里面"。
+# 中文评论区大量用单引号做"提到某个词"的标记：评论区里有人用'公知'这个词攻击他。
+# 只认双引号会把这种元讨论判成正在使用帽子。
+STRAIGHT_QUOTES = ('"', "'")
 
 
 REVERSAL_RE = re.compile(r"(?:是什么|是啥|是哪种|吗|嘛|呢|[?？])")
+
+# 反问式定性的主语。「我不是公知」是第一人称否认；「这不是典型的公知话术吗」
+# 是拿指示代词把对方钉在帽子上——两句话都带"不是"，功能正好相反。
+RHETORICAL_SUBJECTS = ("这", "那", "您", "你", "他", "她", "它")
+CLAUSE_BREAKS = "，。；！？：、\n"
+
+
+def _cut_at_break(text):
+    """截到第一个断句标点之前。反问标记必须和被否定的那个词同处一句。
+
+    「我不是公知，这不是明摆着的吗」——右边 12 字里确实有"吗"，但那是下一个
+    分句,"我不是公知"本身是清楚的否认。不截断就会把它翻成"正在使用"。
+    """
+    cuts = [text.find(broken) for broken in CLAUSE_BREAKS if broken in text]
+    return text[:min(cuts)] if cuts else text
+
+
+def _rhetorical_frame(text, start, end):
+    """「这不是…X…吗」：形式带否定词，功能是定性。
+
+    只看紧邻的"不是"不够——「这不是典型的公知话术吗」中间隔了四个字，
+    紧邻判定抓不到，整句就按否认算，帽子白扣了。
+
+    但也不能一律放宽：「我不是公知，这不是明摆着的吗」里"不是"的主语是第一
+    人称，讲的是否认。所以要求"不是"前面三字内出现过这/那/你/他/她/它，
+    且到命中处之间没有断句。
+    """
+    tail = text[max(0, start - 12):start]
+    pos = tail.rfind("不是")
+    if pos < 0:
+        return False
+    if not any(mark in tail[max(0, pos - 3):pos] for mark in RHETORICAL_SUBJECTS):
+        return False
+    between = tail[pos + 2:]
+    if any(broken in between for broken in CLAUSE_BREAKS):
+        return False
+    return bool(REVERSAL_RE.search(_cut_at_break(text[end:end + 12])))
 
 
 def context_role(text, start, end, window=8):
@@ -211,10 +278,16 @@ def context_role(text, start, end, window=8):
     - "他说我是公知" —— 元讨论，是 quoted
     """
     left = text[max(0, start - window):start]
-    right = text[end:end + 12]
+    right = _cut_at_break(text[end:end + 12])
 
     if left.rstrip().endswith(("不是", "不属于", "不像")) and REVERSAL_RE.search(right):
         return "used"
+    if _rhetorical_frame(text, start, end):
+        return "used"
+    # 紧邻的否定：反问标记没出现时，"这不像 X""这不属于 X" 就是明确的否认。
+    # 只在紧邻时生效——"不像话，这就是 X" 里的"不像"隔着一个词，不能算。
+    if left.rstrip().endswith(("不属于", "不像")):
+        return "denied"
 
     for prefix in NEGATION_PREFIXES:
         if prefix in left:
@@ -225,8 +298,9 @@ def context_role(text, start, end, window=8):
     for open_q, close_q in QUOTE_PAIRS:
         if text.count(open_q, 0, start) > text.count(close_q, 0, start):
             return "quoted"
-    if text.count('"', 0, start) % 2 == 1:
-        return "quoted"
+    for mark in STRAIGHT_QUOTES:
+        if text.count(mark, 0, start) % 2 == 1:
+            return "quoted"
     return "used"
 
 

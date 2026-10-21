@@ -3,6 +3,7 @@
 跑法:
     python -m unittest discover -s tests -v
 """
+import io
 import json
 import locale
 import os
@@ -14,6 +15,7 @@ import tempfile
 import unittest
 import zipfile
 from collections import Counter
+from contextlib import redirect_stdout
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO_ROOT, "scripts")
@@ -173,6 +175,68 @@ class TestScanner(unittest.TestCase):
         findings, _ = self.scan("这不是境外势力是什么？")
         self.assertTrue(findings)
         self.assertEqual(findings[0]["role"], "used")
+
+    def role_of(self, text, pattern_id):
+        findings, _ = self.scan(text)
+        hit = [f for f in findings if f["pattern_id"] == pattern_id]
+        self.assertTrue(hit, f"{pattern_id} 没命中: {text}")
+        return hit[0]["role"]
+
+    def test_rhetorical_question_across_words_is_used(self):
+        """「这不是典型的公知话术吗」——"不是"和帽子隔了四个字，仍是反问定性。
+
+        只看紧邻的"不是"会把整句当否认，帽子白扣。这条来自真实评论区的写法：
+        反问句里很少把否定词紧贴在标签前面。
+        """
+        self.assertEqual(self.role_of("这不是典型的公知话术吗", "HAT-F1-01"), "used")
+
+    def test_first_person_denial_is_not_flipped_by_later_question(self):
+        """反例：「我不是公知，这不是明摆着的吗」
+
+        后面的"吗"属于下一个分句。窗口不截断在断句标点处，就会把一句清楚的
+        自辩翻成"正在使用帽子"——比漏检更糟，等于反过来冤枉被骂的人。
+        """
+        self.assertEqual(self.role_of("我不是公知，这不是明摆着的吗。", "HAT-F1-01"),
+                         "denied")
+
+    def test_third_person_rhetorical_is_used(self):
+        self.assertEqual(self.role_of("他不是公知吗？天天上节目。", "HAT-F1-01"), "used")
+
+    def test_plain_negation_stays_denied(self):
+        self.assertEqual(self.role_of("他不是公知，是普通工程师。", "HAT-F1-01"), "denied")
+
+    def test_not_like_is_denied(self):
+        """"这不像 X" 是否认，不是使用。"""
+        self.assertEqual(self.role_of("这不像公知说的话。", "HAT-F1-01"), "denied")
+
+    def test_not_like_in_another_clause_does_not_deny(self):
+        """「不像话，这就是双标」里的"不像"隔着一个词，不构成对"双标"的否认。
+
+        不区分紧邻，"不像话"会把后面所有的帽子都降级——那是另一种漏检。
+        """
+        self.assertEqual(self.role_of("不像话，这就是双标。", "HAT-F7-01"), "used")
+
+    def test_single_quote_mention_is_quoted(self):
+        """中文评论区常用单引号标记"提到某个词"。
+
+        只认双引号会把"评论区里有人用'公知'攻击他"这种元讨论判成 42 分的攻击。
+        """
+        self.assertEqual(self.role_of("评论区里有人用'公知'这个词攻击他。",
+                                      "HAT-F1-01"), "quoted")
+
+    def test_passive_accusation_is_quoted(self):
+        """"被指 X" 是复述他人的指控，跟"他就是 X"不是一回事。"""
+        self.assertEqual(self.role_of("该账号被指收钱发帖，警方还在调查。",
+                                      "HAT-F3-02"), "quoted")
+
+    def test_urging_others_not_to_label_is_quoted(self):
+        """"别…说别人是 X" 在反对贴标签，不是在使用标签。"""
+        self.assertEqual(self.role_of("别动不动就说别人是带节奏，先看事实。",
+                                      "HAT-F3-01"), "quoted")
+
+    def test_homophone_alias_is_caught(self):
+        """谐音规避：评论区写"公蜘"是为了躲关键词，精确词形匹配会整个漏掉。"""
+        self.assertEqual(self.role_of("又是公蜘一套。", "HAT-F1-01"), "used")
 
     def test_combo_detected(self):
         text = "收钱的吧，一看就是那路人，早晚遭报应。"
@@ -346,6 +410,38 @@ class TestCorpus(unittest.TestCase):
         self.assertGreaterEqual(kinds["neutral"], 8)
         self.assertGreaterEqual(kinds["attack"], 30)
         self.assertGreaterEqual(kinds["context"], 6, "语境样本不足，denied/quoted 降级没有背书")
+
+    def test_every_required_trait_has_a_case(self):
+        """语料的价值在于"长得像真实评论区"，不是条数。
+
+        教科书式的完整句子永远测不出漏检和误伤。所以每种野外写法（无标点连写、
+        谐音规避、叠字施压、单引号转述……）都必须至少有一条语料在模拟它。
+        """
+        counts = Counter()
+        for case in common.load_corpus()["cases"]:
+            counts.update(case.get("traits", []))
+        missing = [t for t in common.REQUIRED_TRAITS if not counts[t]]
+        self.assertEqual(missing, [], f"没有语料模拟这些野外写法: {missing}")
+
+    def test_trait_names_are_from_the_vocabulary(self):
+        """特征名不许自由发挥，否则统计出来是一堆同义词各算一种。"""
+        for case in common.load_corpus()["cases"]:
+            for trait in case.get("traits", []):
+                self.assertIn(trait, common.CORPUS_TRAITS, case["id"])
+
+    def test_unknown_trait_is_rejected(self):
+        original = common.REQUIRED_TRAITS
+        common.CORPUS_TRAITS["bogus-trait"] = "临时造的特征"
+        common.REQUIRED_TRAITS = original + ("bogus-trait",)
+        try:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = verify_data.main([])
+            self.assertEqual(code, 1, "缺特征时数据一致性门禁必须报错")
+            self.assertIn("bogus-trait", buffer.getvalue())
+        finally:
+            common.REQUIRED_TRAITS = original
+            del common.CORPUS_TRAITS["bogus-trait"]
 
     def test_coverage_complete(self):
         cov = corpus_check.coverage()

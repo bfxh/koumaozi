@@ -52,6 +52,9 @@ def payload():
         "negationPrefixes": list(common.NEGATION_PREFIXES),
         "metaPrefixes": list(common.META_PREFIXES),
         "quotePairs": [list(pair) for pair in common.QUOTE_PAIRS],
+        "straightQuotes": list(common.STRAIGHT_QUOTES),
+        "rhetoricalSubjects": list(common.RHETORICAL_SUBJECTS),
+        "clauseBreaks": list(common.CLAUSE_BREAKS),
         "windows": {"amplifier": 24, "role": 8, "roleRight": 12, "combo": 300},
     }
 

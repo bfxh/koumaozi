@@ -193,6 +193,7 @@ def check_corpus(report, hat_ids, pattern_ids):
         report.error("SCHEMA", "corpus.json schema_version 必须为 1")
     seen = set()
     counts = {"attack": 0, "neutral": 0, "context": 0}
+    trait_counts = {}
     for case in data.get("cases", []):
         report.checked += 1
         cid = case.get("id", "")
@@ -201,6 +202,18 @@ def check_corpus(report, hat_ids, pattern_ids):
         if cid in seen:
             report.error("CRP-ID", f"id 重复: {cid}")
         seen.add(cid)
+
+        # 语料的价值在于"长得像真实评论区"。教科书式的完整句子永远测不出漏检和误伤，
+        # 所以每条都要标它模拟了什么野外特征，词表外的值一律拒绝。
+        traits = case.get("traits", [])
+        if not isinstance(traits, list):
+            report.error("CRP-TRAIT", f"{cid} traits 必须是列表")
+            traits = []
+        for trait in traits:
+            if trait not in common.CORPUS_TRAITS:
+                report.error("CRP-TRAIT", f"{cid} 未知特征 {trait}")
+            else:
+                trait_counts[trait] = trait_counts.get(trait, 0) + 1
 
         kind = case.get("kind")
         if kind not in counts:
@@ -251,6 +264,13 @@ def check_corpus(report, hat_ids, pattern_ids):
     if counts["context"] < 6:
         report.error("COVERAGE", f"语境样本少于 6 条（实际 {counts['context']}）："
                                  "denied/quoted 降级没有语料背书")
+
+    # 特征覆盖：缺一种野外写法，就有一类真实文本从没被测过。
+    # 比如把带谐音的那几条删了，精确词形匹配的边界就重新变成无人看守。
+    missing = [trait for trait in common.REQUIRED_TRAITS if not trait_counts.get(trait)]
+    if missing:
+        report.error("COVERAGE", "语料缺少这些野外特征：" + "、".join(
+            f"{trait}（{common.CORPUS_TRAITS[trait]}）" for trait in missing))
     return seen
 
 

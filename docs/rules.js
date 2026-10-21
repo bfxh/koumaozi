@@ -9,7 +9,7 @@
   else { root.KOUMAOZI_RULES = factory(); }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   return {
-   "version": "1.8.1",
+   "version": "1.9.0",
    "families": {
     "stance-traitor": {
      "label": "立场叛徒",
@@ -66,6 +66,7 @@
      "name": "公知",
      "aliases": [
       "公知体",
+      "公蜘",
       "老公知",
       "公共知识分子"
      ],
@@ -1344,6 +1345,7 @@
      "name": "时代红利既得利益者",
      "aliases": [
       "吃红利",
+      "吃时代红利",
       "赶上好时候",
       "靠时代不靠本事"
      ],
@@ -3009,6 +3011,733 @@
        0
       ]
      }
+    },
+    {
+     "id": "CRP-56",
+     "kind": "attack",
+     "text": "说了半天就一个意思，公蜘。散了。",
+     "expect": {
+      "must_include": [
+       "HAT-F1-01"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-57",
+     "kind": "attack",
+     "text": "又是这套话术，收了多少钱啊这篇。",
+     "expect": {
+      "must_include": [
+       "PAT-02"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       25,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-58",
+     "kind": "attack",
+     "text": "这不是典型的水军操作吗 一水的新注册小号",
+     "expect": {
+      "must_include": [
+       "HAT-F3-03",
+       "PAT-01"
+      ],
+      "min_hits": 2,
+      "score_band": [
+       40,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-59",
+     "kind": "attack",
+     "text": "评论区第一排全是机器人，人工置顶吧。",
+     "expect": {
+      "must_include": [
+       "HAT-F3-03"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-60",
+     "kind": "attack",
+     "text": "双标双标双标 说三遍你听得懂吗",
+     "expect": {
+      "must_include": [
+       "HAT-F7-01",
+       "PAT-12"
+      ],
+      "min_hits": 2,
+      "score_band": [
+       40,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-61",
+     "kind": "attack",
+     "text": "女拳又开始了，男的一开口就是压迫",
+     "expect": {
+      "must_include": [
+       "HAT-F5-01"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-62",
+     "kind": "attack",
+     "text": "我劝你先去读书，九年义务教育怕是漏网了",
+     "expect": {
+      "must_include": [
+       "PAT-07"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       25,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-63",
+     "kind": "attack",
+     "text": "这逻辑水平，小学鸡实锤",
+     "expect": {
+      "must_include": [
+       "HAT-F2-04"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-64",
+     "kind": "attack",
+     "text": "键盘侠除了打字还会什么 现实里敢说吗",
+     "expect": {
+      "must_include": [
+       "HAT-F4-03"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-65",
+     "kind": "attack",
+     "text": "站在道德高地上指指点点最容易了",
+     "expect": {
+      "must_include": [
+       "HAT-F7-02"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-66",
+     "kind": "attack",
+     "text": "带节奏带的飞起，收了钱就是不一样",
+     "expect": {
+      "must_include": [
+       "HAT-F3-01",
+       "PAT-02"
+      ],
+      "min_hits": 2,
+      "score_band": [
+       40,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-67",
+     "kind": "attack",
+     "text": "老登味太重了，别代表年轻人了",
+     "expect": {
+      "must_include": [
+       "HAT-F4-05"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-68",
+     "kind": "attack",
+     "text": "又是理中客出场，各打五十大板",
+     "expect": {
+      "must_include": [
+       "HAT-F1-07",
+       "HAT-F3-07"
+      ],
+      "min_hits": 2,
+      "score_band": [
+       40,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-69",
+     "kind": "attack",
+     "text": "喷之前先看看数据，别当民科",
+     "expect": {
+      "must_include": [
+       "HAT-F2-07"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-70",
+     "kind": "attack",
+     "text": "殖人逻辑：只要夸国外就是清醒",
+     "expect": {
+      "must_include": [
+       "HAT-F1-02"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-71",
+     "kind": "attack",
+     "text": "这不就是典型的只许州官放火吗，双标玩得真溜",
+     "expect": {
+      "must_include": [
+       "HAT-F7-01",
+       "PAT-12"
+      ],
+      "min_hits": 2,
+      "score_band": [
+       40,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-72",
+     "kind": "attack",
+     "text": "专家又出来指导了，象牙塔里待久了不知道菜价",
+     "expect": {
+      "must_include": [
+       "HAT-F6-04"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-73",
+     "kind": "attack",
+     "text": "这套说法二十年前就没人信了，古墓派还是别出来丢人。",
+     "expect": {
+      "must_include": [
+       "HAT-F8-03"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-74",
+     "kind": "attack",
+     "text": "开倒车开到这份上，也算是活久见了。",
+     "expect": {
+      "must_include": [
+       "HAT-F8-02"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-75",
+     "kind": "attack",
+     "text": "吃时代红利的人，最擅长教别人努力。",
+     "expect": {
+      "must_include": [
+       "HAT-F8-05"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-76",
+     "kind": "attack",
+     "text": "又是公知🐶的表演，看腻了。",
+     "expect": {
+      "must_include": [
+       "HAT-F1-01"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-77",
+     "kind": "neutral",
+     "text": "这篇文章梳理了该词从学术概念到贬义标签的演变过程。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-78",
+     "kind": "neutral",
+     "text": "研究显示，标签化表达会显著降低讨论质量。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-79",
+     "kind": "neutral",
+     "text": "他在采访中承认自己年轻时也用过这类说法，后来改了。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-80",
+     "kind": "neutral",
+     "text": "根据通报，涉事账号存在批量注册行为，已被平台处置。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-81",
+     "kind": "neutral",
+     "text": "我不同意他的结论，但他列的三条数据我核过，没问题。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-82",
+     "kind": "neutral",
+     "text": "建议先补完基础课再决定方向，这是一般性的建议。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-83",
+     "kind": "neutral",
+     "text": "平台今天上线了对重复内容的识别机制。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-84",
+     "kind": "neutral",
+     "text": "这句话在原文里是引述媒体的报道，不是作者自己的判断。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-85",
+     "kind": "context",
+     "text": "说不过就开始扣帽子说我是水军这种人真没意思",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F3-03"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-86",
+     "kind": "context",
+     "text": "有人说'你就是个公知'，我没接话。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F1-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-87",
+     "kind": "context",
+     "text": "他昨天骂我是水军，今天又说我带节奏，标准随他定。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 2,
+      "downgraded": [
+       "HAT-F3-01",
+       "HAT-F3-03"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-88",
+     "kind": "context",
+     "text": "我不是水军，也没收过任何人一分钱。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F3-03"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-89",
+     "kind": "context",
+     "text": "'巨婴'这个词现在被用得太随意了，什么都往上套。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F2-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-90",
+     "kind": "context",
+     "text": "论文里讨论的'民科'现象，指的是拒绝同行评议的群体。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F2-07"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-91",
+     "kind": "context",
+     "text": "评论区清一色在骂'公知'，可没人说清他哪句错了。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F1-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-92",
+     "kind": "context",
+     "text": "我之前也用'圣母'骂过人，现在觉得挺幼稚的。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F4-04"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-93",
+     "kind": "context",
+     "text": "新闻里说该账号被指收钱发帖，警方还在调查。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F3-02"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-94",
+     "kind": "context",
+     "text": "别动不动就说别人是带节奏，先看事实。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F3-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-95",
+     "kind": "context",
+     "text": "物业的通知我贴一下：3月12日发的，业主群也讨论了两轮，到现在还是没修。有人回我说'你就是个键盘侠，有本事你去修'，我确实不会修，所以我才问什么时候能修。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F4-03"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-96",
+     "kind": "attack",
+     "text": "饭圈那套搬到公共讨论里，还能好好说话吗。",
+     "expect": {
+      "must_include": [
+       "HAT-F5-02"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-97",
+     "kind": "attack",
+     "text": "白左的毛病就是只讲立场不讲成本。",
+     "expect": {
+      "must_include": [
+       "HAT-F5-03"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-98",
+     "kind": "attack",
+     "text": "极端动保又来了，猫比人金贵是吧。",
+     "expect": {
+      "must_include": [
+       "HAT-F5-04"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-99",
+     "kind": "attack",
+     "text": "他不是公知吗？天天上节目。",
+     "expect": {
+      "must_include": [
+       "HAT-F1-01"
+      ],
+      "min_hits": 1,
+      "score_band": [
+       30,
+       100
+      ]
+     }
+    },
+    {
+     "id": "CRP-100",
+     "kind": "context",
+     "text": "我不是公知，这不是明摆着的吗。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F1-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
+    },
+    {
+     "id": "CRP-101",
+     "kind": "context",
+     "text": "这不像公知说的话，倒像是在讲他自己的经历。",
+     "expect": {
+      "must_include": [],
+      "min_hits": 0,
+      "max_hits": 0,
+      "min_raw": 1,
+      "downgraded": [
+       "HAT-F1-01"
+      ],
+      "score_band": [
+       0,
+       0
+      ]
+     }
     }
    ],
    "amplifiers": [
@@ -3068,7 +3797,11 @@
     "怀疑",
     "指责",
     "控诉",
-    "追责"
+    "追责",
+    "被指",
+    "被质疑",
+    "说别人是",
+    "说人家是"
    ],
    "quotePairs": [
     [
@@ -3086,7 +3819,34 @@
     [
      "《",
      "》"
+    ],
+    [
+     "‘",
+     "’"
     ]
+   ],
+   "straightQuotes": [
+    "\"",
+    "'"
+   ],
+   "rhetoricalSubjects": [
+    "这",
+    "那",
+    "您",
+    "你",
+    "他",
+    "她",
+    "它"
+   ],
+   "clauseBreaks": [
+    "，",
+    "。",
+    "；",
+    "！",
+    "？",
+    "：",
+    "、",
+    "\n"
    ],
    "windows": {
     "amplifier": 24,
