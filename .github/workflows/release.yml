@@ -13,9 +13,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 打 tag 不等于推 main，ci.yml 的矩阵不一定在这个 commit 上跑过；
+  # 就算跑过，也只是"源码目录能用"。发出去的包要装到用户机器上，
+  # 装完能不能用必须单独验——而且要在发布之前验，不能发布之后再发现。
+  verify-install:
+    name: 安装端到端 · ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04,   label: "bash",   shell: bash }
+          - { os: windows-latest, label: "PS 5.1", shell: powershell }
+          - { os: windows-latest, label: "pwsh 7", shell: pwsh }
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # 打包是 gate 的 package 门禁的一部分（打完立刻解压自检），
+      # 这里只调入口，不在 yml 里再写一遍打包规则
+      - name: 打包
+        run: python scripts/gate.py --only package
+
+      - name: 安装（bash）
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          mkdir -p "$HOME"
+          bash scripts/install.sh --from "dist/koumaozi-$(cat VERSION).zip" -y
+
+      # install.ps1 结尾会 exit，验证必须放到下一个 step
+      - name: 安装（PowerShell）
+        if: matrix.shell != 'bash'
+        shell: ${{ matrix.shell }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $zip = (Resolve-Path "dist/koumaozi-$version.zip").Path
+          $target = Join-Path $env:RUNNER_TEMP "skills\koumaozi"
+          & ".\scripts\install.ps1" -From $zip -Target $target -Yes
+
+      - name: 装完之后真的能用
+        shell: bash
+        run: |
+          if [ "${{ matrix.shell }}" = "bash" ]; then
+            installed="$RUNNER_TEMP/fakehome/.workbuddy/skills/koumaozi"
+          else
+            installed="$RUNNER_TEMP/skills/koumaozi"
+          fi
+          python scripts/install_smoke.py --installed "$installed"
+
   release:
     name: 打包 · 自检 · 发布
+    needs: verify-install
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v7
@@ -29,40 +86,14 @@ jobs:
 
       # tag 指向的 commit 很可能从没被 ci.yml 跑过（打 tag 不等于推 main），
       # 所以这里不能假设"CI 已经验过了"，必须自己再验一遍。
+      # 用 Python 而不是 bash：同一段判断在 Windows 作业里也要能跑。
       - name: tag 与 VERSION 一致
-        run: |
-          version="$(cat VERSION)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "VERSION 是 $version，tag 是 $GITHUB_REF_NAME，对不上" >&2
-            echo "发版请先改 VERSION 再打同名 tag" >&2
-            exit 1
-          fi
-          echo "版本 $version 已确认"
+        run: python scripts/release_check.py --tag "$GITHUB_REF_NAME"
 
       # gate.py 的 package 门禁已经打包 + 解压自检，dist/ 就是它产出的。
       # 这里不重复打一次——重复的步骤迟早会和 gate 里的定义漂开。
       - name: 全量门禁（含打包与产物自检）
         run: python scripts/gate.py --markdown gate.md
-
-      # 包能跑不等于装完能用。安装脚本真装一遍，再用装好的路径扫一次。
-      # 最后在装好的目录里跑一遍门禁——1.6.0 就是漏了这步：包里不带 tests/，
-      # 用户装完一跑 gate 就红，而所有发布门禁全绿。
-      - name: 安装脚本端到端
-        run: |
-          export HOME="$RUNNER_TEMP/fakehome"
-          mkdir -p "$HOME"
-          bash scripts/install.sh --from dist/koumaozi-*.zip -y
-          installed="$HOME/.workbuddy/skills/koumaozi"
-          python "$installed/scripts/hat_scan.py" \
-            --text "典型的带节奏，一条多少钱？" --json > installed-scan.json
-          python - <<'PY'
-          import json
-          summary = json.load(open("installed-scan.json", encoding="utf-8"))["summary"]
-          assert summary["hat_hits"] >= 1, summary
-          assert summary["pattern_hits"] >= 1, summary
-          print("装完之后扫得出东西:", summary)
-          PY
-          ( cd "$installed" && python scripts/gate.py --tier core )
 
       - name: 生成 Release 说明
         run: python scripts/release_notes.py --out NOTES.md
@@ -71,8 +102,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(cat VERSION)"
           gh release create "$GITHUB_REF_NAME" \
-            dist/koumaozi-*.zip dist/koumaozi-*.zip.sha256 \
+            "dist/koumaozi-$version.zip" "dist/koumaozi-$version.zip.sha256" \
             --verify-tag \
             --title "扣帽子工程 $GITHUB_REF_NAME" \
             --notes-file NOTES.md
@@ -83,25 +115,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(cat VERSION)"
           mkdir -p downloaded
           gh release download "$GITHUB_REF_NAME" --dir downloaded
-          cd downloaded
-          ls -l
-          sha256sum -c *.sha256
-          cd ..
-          python - <<'PY'
-          import glob, json, os, hashlib
-          local = glob.glob("dist/koumaozi-*.zip")[0]
-          remote = glob.glob("downloaded/koumaozi-*.zip")[0]
-          def digest(p):
-              h = hashlib.sha256()
-              with open(p, "rb") as fh:
-                  for chunk in iter(lambda: fh.read(1 << 16), b""):
-                      h.update(chunk)
-              return h.hexdigest()
-          assert digest(local) == digest(remote), "发布出去的包与本地验过的包不一致"
-          print("回收复检通过:", os.path.basename(remote), digest(remote))
-          PY
+          ls -l downloaded
+          python scripts/release_check.py --tag "$GITHUB_REF_NAME" \
+            --local "dist/koumaozi-$version.zip" \
+            --remote "downloaded/koumaozi-$version.zip" \
+            --sum "downloaded/koumaozi-$version.zip.sha256"
 
       - name: 摘要
         run: |

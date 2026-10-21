@@ -93,6 +93,12 @@ python3 scripts/hat_scan.py --text "这种公知体还用看？一条多少钱�
 # 扫整个目录，只报 Warning 以上
 python3 scripts/hat_scan.py --target examples/notes/ --min-severity Warning
 
+# 扫讲解性文档：标题/表格里的标签按"提到"算，别把字典判成攻击
+python3 scripts/hat_scan.py --target references/ --doc-mode
+
+# 出 markdown 报告，能直接贴进 issue
+python3 scripts/hat_scan.py --file examples/draft.md --report --top 10
+
 # 整串连招（10 条固定连招，四向封死直接判 Critical）
 python3 scripts/hat_generate.py --target "某博主" --combo CMB-01 --seed 3
 
@@ -112,7 +118,8 @@ python3 scripts/verify_data.py
 python3 scripts/wordcount.py
 ```
 
-Python 3.8+，**标准库零依赖**。Windows 控制台自动切 UTF-8。
+Python 3.9+，**标准库零依赖**。Windows 控制台自动切 UTF-8。
+（写 3.9 不是 3.8：CI 矩阵最小只跑到 3.9，没被跑过的版本号等于空话。）
 
 ## 结构
 
@@ -157,12 +164,16 @@ koumaozi/
 │   ├── verify_data.py                一致性门禁（含版本同步）
 │   ├── wordcount.py                  内容量门禁
 │   ├── package.py                    打包 + 产物自检（解压后验证，不验源目录）
+│   ├── release_check.py              发版一致性 + 发布后回收复检（跨平台）
 │   ├── release_notes.py              从 CHANGELOG 抽发版说明
+│   ├── install_smoke.py              装完之后能不能用（布局/扫描/门禁跳过）
+│   ├── mutation_check.py             变异验证：把已修的 bug 改回去，看门禁红不红
+│   ├── web_lint.py                   网页端静态检查（JS 语法 / script 引用 / DOM id）
 │   ├── install.sh                    安装（Linux/macOS/WSL）
 │   └── install.ps1                   安装（Windows，Junction 支持开发态）
 ├── .github/workflows/
-│   ├── ci.yml                        门禁 × py3.9/3.12/3.13
-│   ├── release.yml                   打 tag 发版：门禁 → 打包自检 → 装一遍 → 发布 → 回收复检
+│   ├── ci.yml                        门禁 × py3.9/3.12/3.13 + 三平台安装端到端
+│   ├── release.yml                   打 tag 发版：先验安装（三平台）→ 门禁 → 打包自检 → 发布 → 回收复检
 │   └── pages.yml                     发布 docs/ 到 Pages（发布前先对拍）
 └── tests/test_koumaozi.py            门禁测试
 ```
@@ -224,7 +235,7 @@ AI 写的帽子 100% 有 AI 味，因为它倾向于把攻击写得"完整"—�
 
 ## 质量门禁
 
-九道门禁定义在 `scripts/gate.py` **一处**，本地和 CI 跑同一套：
+十一道门禁定义在 `scripts/gate.py` **一处**，本地和 CI 跑同一套：
 
 ```bash
 python3 scripts/gate.py              # 全量，一次跑完再看结论
@@ -240,10 +251,12 @@ python3 scripts/gate.py --only data,corpus
 | `data` | 数据一致性 | schema、家族覆盖、别名冲突、模板槽位、文档引用的编号真实存在、版本号三处一致 |
 | `words` | 内容量 | 文档被大段删改后规模缩水（门槛一万字） |
 | `corpus` | 回归语料 | 漏检、误报、降级失效、句式/连招/家族覆盖出现空洞 |
-| `unit` | 单元测试 | 扫描器正反例、连招检测、生成器可复现、diff 方向、性能（防正则回溯爆炸）、`install --check` 两平台的版本比较与完整性核对 |
+| `unit` | 单元测试 | 扫描器正反例、连招检测、生成器可复现、diff 方向、性能（防正则回溯爆炸）、`install --check` 两平台的版本比较与完整性核对、标签分只算 `used`、`--doc-mode` 的降级边界、发版一致性、安装布局 |
+| `mutation` | 变异验证 | **门禁本身有没有在防东西**。把已经修好的 10 个 bug 逐一改回去，不红的就是装饰品 |
 | `docs` | 文档命令 | 文档里的命令示例照抄能不能跑 |
 | `cli` | CLI 冒烟 | 四个命令的端到端形状：扫描有命中、连招三段结构、改稿门禁能拦恶化 |
 | `web` | 网页端对拍 | 网页用的是旧规则，或浏览器端与 Python 端判得不一样——两者都不报错，只是网页结论不可信 |
+| `weblint` | 网页静态检查 | `app.js` 找的 DOM id 在 `index.html` 里存不存在、`<script src>` 引用的文件是否真实存在、有没有重复 id |
 | `package` | 产物 | 发出去的包齐不齐、能不能跑（解压后验证） |
 
 **为什么收进一个入口**：门禁散在 workflow 里有两个老问题——本地要自己记顺序，记错就得到假结果；CI 和本地各写一份，改了一边忘另一边，就出现"本地绿、CI 红"。现在 `ci.yml` / `release.yml` 只负责"在哪个 Python 版本上跑哪一层"，具体集合不再重复列举。有一条测试专门盯着这件事（`test_workflows_go_through_single_entry`），谁在 yml 里再抄一遍脚本名，CI 就红。
@@ -259,6 +272,27 @@ FAIL  回归语料  0.24s
 ```
 
 门禁的意义不在通过，在于挡住"看着像有内容"的改动：加一顶帽子必须补反制要点，改模板必须保证槽位有默认值，写文档引用编号必须真实存在，动正则必须过回归语料。
+
+### 门禁也会腐烂，所以门禁要验门禁
+
+测试写错了对象、`assertIn` 写成永远成立的形式，跑起来照样一片绿，谁也不会去看它到底在防什么。`mutation_check.py` 是唯一的办法：**把被防的那件事故意做错一次，看它红不红**。
+
+10 条变异，每条都是一次真实修复的回滚：
+
+```
+PASS  score        标签分不再按 used 过滤
+      改回去就红 → 挡的是「澄清文和攻击文拿同样的分」
+PASS  combo        连招不再按 used 过滤
+      改回去就红 → 挡的是「被引用的碎片被拼成 Critical 连招」
+PASS  docmode      标题和表格不再降级
+      改回去就红 → 挡的是「讲解文章被判满分（工具直接不可用）」
+PASS  overdemote   引用块也被降级（降过头）
+      改回去就红 → 挡的是「粘原话扫描报 0 分，错在另一个方向」
+...
+变异验证  10/10 抓到  |  全部有效  (3.55s)
+```
+
+它自己有两条防线：锚点匹配不到（源码改动导致 pattern 失效）时不是静默跳过而是报错；每次变异后逐字节校验文件已恢复，否则下一次跑的就是半变异过的源码。
 
 ### 文档即测试
 
@@ -293,12 +327,15 @@ FAIL  回归语料  0.24s
 
 推 `v*` tag 触发 `.github/workflows/release.yml`，顺序是：
 
+0. **先在三平台真装一遍**（`verify-install`：ubuntu 的 `install.sh`、Windows 的 `install.ps1` 分别在 PS 5.1 和 pwsh 7 下）。这一步在发布**之前**跑，`release` 作业 `needs` 它——装不上就不进入发布流程，而不是发完才发现。
 1. **tag 与 `VERSION` 必须一致**——版本号在 `VERSION` 一处定义，`SKILL.md` 的 frontmatter 与 `CHANGELOG.md` 最新段由 `verify_data.py` 校验同步，任何一处漂了就发不出去。
 2. **全量门禁重跑一遍**。打 tag 不等于推 main，那个 commit 很可能从没被 `ci.yml` 验过。
 3. **打包 + 产物自检**：`package.py --verify` 解压到干净临时目录，按包内 `MANIFEST.sha256` 校验每个文件，再在**解压后**的目录里跑数据门禁、语料门禁、扫描、生成、改稿对比。
-4. **安装脚本端到端**：真跑一次 `install.sh` 装到临时 HOME，再用装好的路径扫一次。
+4. （已上移到第 0 步：三平台并行，不再只在 ubuntu 上验 bash 版）
 5. **建 Release**，附 `koumaozi-<version>.zip` 与 `.sha256`，说明从 `CHANGELOG.md` 抽（`release_notes.py`），抽不到就不发。
-6. **发布后回收复检**：把刚上传的资产下载回来，和本地验过的那份比 sha256。
+6. **发布后回收复检**：把刚上传的资产下载回来，和本地验过的那份比 sha256，并核对随包发布的 `.sha256` 文件——不是信它写的值，是拿包本身重算一遍。
+
+第 1 步和第 6 步原来写在 yml 的 bash 片段里（`cat VERSION`、`sha256sum -c`），只能跑在 ubuntu 上。现在收进 `scripts/release_check.py`：Windows runner 上没有 `sha256sum`，而"这条发布门禁在 Windows 上跑不了"本身就是个洞。
 
 第 3、6 步是这套 CD 的全部意义。**只验源码目录是假 CD**——少打一个 `data/` 文件照样一路绿，用户装上去当场报错。所以验证对象永远是"解压出来的那一份"和"从 Release 下载回来的那一份"，不是工作区。
 
@@ -309,7 +346,11 @@ python3 scripts/package.py --verify         # 打包并自检
 python3 scripts/package.py --verify dist/koumaozi-*.zip     # 只验已有包
 python3 scripts/package.py --check-dir      # 核对当前目录（源码态会说跳过）
 python3 scripts/release_notes.py            # 看这一版会发什么说明
+python3 scripts/release_check.py --tag "v$(cat VERSION)"   # doc-smoke: skip 依赖 shell 展开
+python3 scripts/install_smoke.py --installed "$HOME/.workbuddy/skills/koumaozi"   # doc-smoke: skip 依赖 $HOME 且要预先装过
 ```
+
+前两条要说明一下：`--tag "v$(cat VERSION)"` 是 tag 与 VERSION 的一致性检查，`--installed` 是装完之后的端到端验证。它们依赖 shell 展开和已安装环境，所以标了跳过——不是不能跑，是不适合"逐字复制就对"这条标准。
 
 ## License
 

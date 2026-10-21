@@ -30,8 +30,11 @@ import hat_diff  # noqa: E402
 import hat_generate  # noqa: E402
 import hat_scan  # noqa: E402
 import package  # noqa: E402
+import install_smoke  # noqa: E402
+import release_check  # noqa: E402
 import release_notes  # noqa: E402
 import verify_data  # noqa: E402
+import web_lint  # noqa: E402
 import web_parity  # noqa: E402
 import wordcount  # noqa: E402
 
@@ -292,6 +295,254 @@ class TestScanner(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertGreater(payload["summary"]["pattern_hits"], 0)
+
+
+class TestScoreOnlyCountsUsed(unittest.TestCase):
+    """标签分只认 role=used。
+
+    这里挡的是一类"看着对、算起来错"的缺陷：severity 降了级、密度照算，
+    等于没降。澄清文和攻击文拿同样的分，工具就直接不可用了。
+    """
+
+    def setUp(self):
+        self.patterns = hat_scan.compile_patterns()
+
+    def scan(self, text):
+        findings, chars = hat_scan.scan_text("<t>", text, self.patterns)
+        return findings, hat_scan.score(findings, chars)
+
+    def test_quoted_hits_do_not_raise_the_score(self):
+        # 同样的句子：一次直接说，一次放在引号里
+        attack = "说这话的，标准公知体，不用看了。"
+        quote = "他在文章里写「说这话的，标准公知体，不用看了。」然后逐条反驳。"
+        _, attack_stats = self.scan(attack)
+        _, quote_stats = self.scan(quote)
+        self.assertGreater(attack_stats["label_score"], 0)
+        self.assertEqual(quote_stats["hat_hits"], 0, "引号里的命中不该计入 used")
+        self.assertGreater(quote_stats["quoted_hits"], 0, "但要在 quoted_hits 里留痕")
+        self.assertLess(quote_stats["label_score"], attack_stats["label_score"])
+
+    def test_denied_hits_do_not_raise_the_score(self):
+        _, stats = self.scan("我没有收钱，也不是公知，工资条在这儿。")
+        self.assertEqual(stats["hat_hits"], 0)
+        self.assertGreater(stats["denied_hits"], 0)
+        self.assertEqual(stats["label_score"], 0)
+
+    def test_denial_prose_scores_lower_than_attack_prose(self):
+        # 逐字量级可比的两段：一段在自辩，一段在扣
+        denial = ("我不是什么公知，也没有收过任何人的钱。这个项目的账目全部公开，"
+                  "每一笔都能查。你要说我带节奏，请指出哪一句是假的。")
+        attack = ("这种公知体，收钱的吧？一看就是带节奏。问了三遍不敢答，"
+                  "心里有数了吧，难怪这么多人骂你。")
+        _, denial_stats = self.scan(denial)
+        _, attack_stats = self.scan(attack)
+        self.assertLess(denial_stats["label_score"], attack_stats["label_score"] / 2,
+                        f"澄清文 {denial_stats['label_score']} 分 vs 攻击文 "
+                        f"{attack_stats['label_score']} 分——差距不够，澄清文会被误判")
+
+    def test_score_parts_are_used_only(self):
+        # 直接喂构造的 findings，绕开文本解析，确保统计口径本身没跑偏
+        findings = [
+            {"kind": "hat", "role": "quoted", "severity": "Critical"},
+            {"kind": "pattern", "role": "denied", "severity": "Warning"},
+            {"kind": "hat", "role": "used", "severity": "Warning"},
+        ]
+        stats = hat_scan.score(findings, 1000)
+        self.assertEqual(stats["hat_hits"], 1)
+        self.assertEqual(stats["pattern_hits"], 0)
+        self.assertEqual(stats["critical_hits"], 0)
+        self.assertEqual(stats["quoted_hits"], 1)
+        self.assertEqual(stats["denied_hits"], 1)
+
+    def test_combo_never_assembled_from_quoted_fragments(self):
+        # 三段被引用的话按顺序排好，不构成"作者在打连招"
+        text = ("他先写「说这话的，标准公知体」，再写「一条多少钱？」，"
+                "最后写「问了三遍不敢答」。")
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns)
+        self.assertFalse([f for f in findings if f["kind"] == "combo"],
+                         "被引用的片段被拼成了连招")
+        used = [f for f in findings if f["role"] == "used"]
+        self.assertEqual(used, [])
+
+
+class TestDocMode(unittest.TestCase):
+    """`--doc-mode`：标题和表格里的标签是条目，不是发言。
+
+    拿工具扫一篇讲解扣帽子现象的文章，正文一个字没在骂人，却因为标题写着
+    `### 公知`、表格里排着 `公知、殖人、小粉红` 被判满分——这是最容易被
+    判定为"不能用"的误报。
+    """
+
+    def setUp(self):
+        self.patterns = hat_scan.compile_patterns()
+
+    def slots(self, text, absolute):
+        return common.markdown_slot(text, absolute)
+
+    def test_slot_detection(self):
+        cases = [
+            ("### HAT-F1-01 公知", "heading"),
+            ("| 立场叛徒 | 公知、殖人 |", "table"),
+            ("- 条目一", "list"),
+            ("1. 有序条目", "list"),
+            ("> 引用的一句话", "quote"),
+            ("普通段落", ""),
+        ]
+        for text, expected in cases:
+            absolute = text.index("公知") if "公知" in text else 0
+            self.assertEqual(self.slots(text, absolute), expected, text)
+
+    def test_slot_is_scoped_to_its_own_line(self):
+        # 上一行是标题，不影响下一行正文的判定
+        text = "### 公知\n这段正文在讲这个标签的历史。"
+        self.assertEqual(self.slots(text, text.index("历史")), "")
+
+    def test_heading_is_demoted_but_blockquote_is_not(self):
+        text = "### HAT-F1-01 公知\n\n> 说这话的，标准公知体，不用看了。\n"
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns, doc_mode=True)
+        roles = {f["struct"]: f["role"] for f in findings if f["kind"] == "hat"}
+        self.assertEqual(roles.get("heading"), "quoted")
+        self.assertEqual(roles.get("quote", "used"), "used",
+                         "引用块是粘原话最常用的形式，降级会造成漏检")
+
+    def test_table_row_is_demoted(self):
+        text = "| 家族 | 帽子 |\n|---|---|\n| 立场叛徒 | 公知、殖人、小粉红、境外势力 |\n"
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns, doc_mode=True)
+        hats = [f for f in findings if f["kind"] == "hat"]
+        self.assertTrue(hats)
+        self.assertTrue(all(f["role"] == "quoted" for f in hats), [f["role"] for f in hats])
+        self.assertTrue(all(f["demoted"] for f in hats))
+
+    def test_list_item_without_id_stays_used(self):
+        # 真有人一条条列帽子骂人，列表项不能一律降级
+        text = "- 你这种双标的东西\n"
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns, doc_mode=True)
+        hats = [f for f in findings if f["kind"] == "hat"]
+        self.assertTrue(hats)
+        self.assertEqual({f["role"] for f in hats}, {"used"})
+
+    def test_list_item_with_id_is_demoted(self):
+        text = "- CMB-03 的纸环是双标（要列差异）\n"
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns, doc_mode=True)
+        hats = [f for f in findings if f["kind"] == "hat"]
+        self.assertTrue(hats)
+        self.assertEqual({f["role"] for f in hats}, {"quoted"})
+
+    def test_doc_mode_off_leaves_roles_alone(self):
+        text = "### HAT-F1-01 公知\n"
+        findings, _ = hat_scan.scan_text("<t>", text, self.patterns, doc_mode=False)
+        hats = [f for f in findings if f["kind"] == "hat"]
+        self.assertEqual({f["role"] for f in hats}, {"used"})
+        self.assertEqual({f["struct"] for f in hats}, {""})
+
+    def test_demoted_count_is_surfaced_not_swallowed(self):
+        text = "\n".join(f"### HAT-F1-01 公知{i}" for i in range(3))
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "hat_scan.py"),
+             "--file", self._temp(text), "--doc-mode"],
+            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("未计入标签分", result.stdout)
+        self.assertIn("结构行", result.stdout)
+
+    def _temp(self, content):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                             encoding="utf-8")
+        handle.write(content)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_own_explainer_docs_drop_under_doc_mode(self):
+        # 本仓库的讲解文档是回归样本：文档模式必须把它们压到"轻度"区间。
+        # 攻击样本文档（examples/、casebook、combos）不在此列，它们就该高分。
+        explainers = ["SKILL.md", "references/hats-catalog.md",
+                      "references/rhetoric-patterns.md", "references/counterplay.md"]
+        for name in explainers:
+            path = os.path.join(REPO_ROOT, name)
+            with open(path, encoding="utf-8") as handle:
+                raw = handle.read()
+            findings, chars = hat_scan.scan_text(path, raw, self.patterns, doc_mode=True)
+            stats = hat_scan.score(findings, chars)
+            self.assertLess(stats["label_score"], 45,
+                            f"{name} 在文档模式下仍有 {stats['label_score']} 分")
+
+
+class TestReportOutput(unittest.TestCase):
+    """`--report` 输出 markdown。给人看的东西，结构不能随手糊。"""
+
+    def run_scan(self, *args):
+        return subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "hat_scan.py"), *args],
+            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+
+    def test_report_has_expected_sections(self):
+        result = self.run_scan("--text", "这种公知体，一条多少钱？带节奏的吧。", "--report")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for heading in ("# 扣帽子扫描报告", "## 按文件", "## 证据"):
+            self.assertIn(heading, result.stdout)
+
+    def test_report_rows_match_findings(self):
+        result = self.run_scan("--text", "这种公知体，一条多少钱？带节奏的吧。", "--report")
+        # 只看「## 证据」那张表：上面的「## 按文件」是 7 列，混在一起数会错
+        evidence = result.stdout.split("## 证据", 1)[1]
+        rows = [line for line in evidence.splitlines()
+                if line.startswith("| ") and "---" not in line and "行 |" not in line]
+        self.assertTrue(rows, "证据表是空的")
+        for row in rows:
+            self.assertEqual(row.count("|"), 8, f"表格列数不对: {row}")
+
+    def test_report_says_so_when_clean(self):
+        result = self.run_scan("--text", "本次评审共收到十二份方案，按三项指标逐条打分。", "--report")
+        self.assertIn("未检出", result.stdout)
+
+    def test_report_marks_demoted_hits(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                         encoding="utf-8") as handle:
+            handle.write("### HAT-F1-01 公知\n")
+        self.addCleanup(os.unlink, handle.name)
+        result = self.run_scan("--file", handle.name, "--report", "--doc-mode")
+        self.assertIn("文档模式", result.stdout)
+        self.assertIn("降级", result.stdout)
+
+
+class TestStripCodeKeepsLines(unittest.TestCase):
+    """清洗代码块必须等长**且保行**。
+
+    只按长度补空格会把整块围栏压成一行：字符数一样，行号全乱。README 实测
+    原文 317 行、清洗后 198 行，报出来的行号比真实位置小 111 行，用户照着
+    行号跳转会落到别的段落。
+    """
+
+    def test_line_count_is_preserved(self):
+        text = "第一行\n```\ncode 1\ncode 2\ncode 3\n```\n最后一行"
+        cleaned = common.strip_code(text)
+        self.assertEqual(cleaned.count("\n"), text.count("\n"))
+        self.assertEqual(len(cleaned), len(text))
+
+    def test_line_numbers_survive_a_fenced_block(self):
+        body = "\n".join(["说明一", "```", "print(1)", "print(2)", "```", "这种公知体，一条多少钱？"])
+        patterns = hat_scan.compile_patterns()
+        findings, _ = hat_scan.scan_text("<t>", body, patterns)
+        hit = [f for f in findings if f["kind"] == "hat"]
+        self.assertTrue(hit)
+        self.assertEqual(hit[0]["line"], 6, "行号被代码块挤歪了")
+
+    def test_real_readme_line_numbers_are_accurate(self):
+        path = os.path.join(REPO_ROOT, "README.md")
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+        cleaned = common.strip_code(raw)
+        self.assertEqual(cleaned.count("\n"), raw.count("\n"))
+        # 抽查：每一处命中的行号，在原文里确实含它自己报出的那个词
+        patterns = hat_scan.compile_patterns()
+        findings, _ = hat_scan.scan_text(path, raw, patterns)
+        lines = raw.splitlines()
+        for item in findings[:40]:
+            if item["line"] - 1 >= len(lines):
+                self.fail(f"{item['pattern_id']} 报的行号超出文件长度")
+            self.assertIn(item["matched"], lines[item["line"] - 1],
+                          f"L{item['line']} 里找不到 {item['matched']!r}")
 
 
 class TestGenerator(unittest.TestCase):
@@ -904,6 +1155,31 @@ class TestDocSmoke(unittest.TestCase):
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_skip_mark_must_be_on_the_command_line(self):
+        """跳过标记写在单独一行不生效。
+
+        doc_smoke 只抽取以 `python3 scripts/` 开头的行，整行注释在进入判断前
+        就被 continue 掉了。原来 docstring 里写的是"上一行"，按那个写出来的
+        是空标记——命令照跑，然后红。这里把两种写法都钉住。
+        """
+        tmp = tempfile.mkdtemp(prefix="koumaozi-skip-")
+        try:
+            def cases(body):
+                path = os.path.join(tmp, "doc.md")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+                return doc_smoke.extract(path)
+
+            inline = cases("```bash\npython3 scripts/hat_scan.py --text x  # doc-smoke: skip 有原因\n```\n")
+            self.assertEqual(inline, [], "行尾标记应当让命令整体不被收集")
+
+            separate = cases("```bash\n# doc-smoke: skip 有原因\npython3 scripts/hat_scan.py --text x\n```\n")
+            self.assertEqual(len(separate), 1, "单独一行的标记拦不住命令——这是有意的行为，不是漏抽")
+            self.assertIsNone(separate[0]["skip"])
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_every_referenced_file_exists(self):
         """文档里点名的样例文件必须真的在——这条最便宜也最有用。"""
         import shlex
@@ -1006,6 +1282,165 @@ class TestDiffInput(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
 
+class TestReleaseFlow(unittest.TestCase):
+    """发版链路上的三个判断：tag 一致、包没被换、装完能用。
+
+    这三步原来写在 release.yml 的 bash 片段里，只能在 ubuntu 上跑，
+    而且没有任何测试——发版失败是最贵的一种失败，因为它发生在最后一刻。
+    """
+
+    def setUp(self):
+        self.version = common.read_version()
+
+    def test_tag_matches_version(self):
+        self.assertEqual(release_check.check_tag(f"v{self.version}"), [])
+
+    def test_tag_mismatch_is_rejected(self):
+        problems = release_check.check_tag("v0.0.1")
+        self.assertTrue(problems)
+        self.assertIn("对不上", problems[0])
+
+    def test_tag_with_prefix_is_rejected(self):
+        # release-1.10.1 这种"看着像"的 tag 不能放行：Release 页面写的版本
+        # 和装出来的版本必须是同一个
+        self.assertTrue(release_check.check_tag(f"release-{self.version}"))
+        self.assertTrue(release_check.check_tag(f"v{self.version}.0"))
+
+    def test_tampered_package_is_caught(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good = os.path.join(tmp, "a.zip")
+            bad = os.path.join(tmp, "b.zip")
+            for path, payload in ((good, b"package"), (bad, b"package+")):
+                with open(path, "wb") as fh:
+                    fh.write(payload)
+            self.assertEqual(release_check.compare(good, good), [])
+            problems = release_check.compare(good, bad)
+            self.assertTrue(problems)
+            self.assertIn("不一致", problems[0])
+
+    def test_sum_file_is_verified_not_trusted(self):
+        """`sha256sum -c` 的等价物：文件里写的哈希要拿文件本身重算一遍。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            package = os.path.join(tmp, "koumaozi-1.0.0.zip")
+            with open(package, "wb") as fh:
+                fh.write(b"real content")
+            sum_path = package + ".sha256"
+
+            real = release_check.digest(package)
+            with open(sum_path, "w", encoding="utf-8") as fh:
+                fh.write(f"{real}  koumaozi-1.0.0.zip\n")
+            problems, checked = release_check.check_sum_file(sum_path)
+            self.assertEqual(problems, [])
+            self.assertEqual(checked, 1)
+
+            # 包被换掉，但校验文件还是旧的
+            with open(package, "wb") as fh:
+                fh.write(b"swapped content")
+            problems, _ = release_check.check_sum_file(sum_path)
+            self.assertTrue(problems)
+            self.assertIn("哈希不符", problems[0])
+
+    def test_sum_file_pointing_at_missing_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sum_path = os.path.join(tmp, "ghost.zip.sha256")
+            with open(sum_path, "w", encoding="utf-8") as fh:
+                fh.write("0" * 64 + "  ghost.zip\n")
+            problems, _ = release_check.check_sum_file(sum_path)
+            self.assertTrue(problems)
+            self.assertIn("不存在", problems[0])
+
+    def test_workflow_passes_tag_to_release_check(self):
+        """release.yml 必须真的调 release_check.py，而不是各自再写一遍判断。"""
+        path = os.path.join(REPO_ROOT, ".github", "workflows", "release.yml")
+        with open(path, "r", encoding="utf-8") as fh:
+            workflow = fh.read()
+        self.assertIn("scripts/release_check.py", workflow)
+        self.assertNotIn("sha256sum -c", workflow,
+                         "Windows runner 上没有 sha256sum，产物校验要用 release_check.py")
+        self.assertIn("needs: verify-install", workflow,
+                      "安装验证没过就不该发版")
+
+
+class TestInstallSmoke(unittest.TestCase):
+    """装完能不能用——1.6.0 就是漏了这一步：包里不带 tests/，
+    用户装完一跑 gate 就红，而发布流水线全绿。"""
+
+    def make_tree(self, root, extra_dirs=()):
+        for rel in install_smoke.REQUIRED_FILES:
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{}" if rel.endswith(".json") else "x")
+        for name in extra_dirs:
+            os.makedirs(os.path.join(root, name), exist_ok=True)
+
+    def test_complete_layout_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_tree(tmp)
+            self.assertEqual(install_smoke.check_layout(tmp), [])
+
+    def test_missing_file_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_tree(tmp)
+            os.unlink(os.path.join(tmp, "data", "hats.json"))
+            problems = install_smoke.check_layout(tmp)
+            self.assertTrue([p for p in problems if "hats.json" in p], problems)
+
+    def test_tests_and_docs_must_not_ship(self):
+        """这两个目录不该进安装包：用户用不上，白占体积。
+
+        顺带守着 gate 的跳过逻辑——它们在包里意味着有人的打包白名单写宽了。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_tree(tmp, extra_dirs=("tests", "docs"))
+            problems = install_smoke.check_layout(tmp)
+            self.assertEqual(len([p for p in problems if "不该被打进" in p]), 2, problems)
+
+    def test_required_files_exist_in_source(self):
+        """清单里写了源仓库没有的文件，验证就永远在报"装完缺文件"。"""
+        for rel in install_smoke.REQUIRED_FILES:
+            self.assertTrue(os.path.isfile(os.path.join(REPO_ROOT, rel)),
+                            f"install_smoke.REQUIRED_FILES 里的 {rel} 在源仓库里不存在")
+
+    def test_required_files_are_all_packaged(self):
+        """验证清单必须是打包清单的子集。
+
+        两份清单各写一处，早晚漂开：一边要求 SKILL.md 之外的某个文件、
+        另一边打包白名单没跟上，结果就是"包里明明有、验证说没有"，
+        或者反过来——验证通过而用户装完缺功能。这里直接把两个集合对上。
+        """
+        packaged = {rel for rel, _ in package.collect()}
+        missing = [rel for rel in install_smoke.REQUIRED_FILES if rel not in packaged]
+        self.assertEqual(missing, [],
+                         f"这些文件验证时要求存在，但不在打包白名单里: {missing}")
+
+
+class TestWebLint(unittest.TestCase):
+    """app.js 是全仓库唯一没有行为测试的地方，只能查静态契约。"""
+
+    def test_missing_id_is_caught(self):
+        html = '<div id="score"></div>'
+        app = 'document.getElementById("score"); document.getElementById("bar");'
+        problems = web_lint.check_dom_contract(html, app)
+        self.assertTrue(problems)
+        self.assertIn("bar", problems[0])
+
+    def test_duplicate_id_is_caught(self):
+        html = '<div id="score"></div><div id="score"></div>'
+        problems = web_lint.check_dom_contract(html, 'getElementById("score")')
+        self.assertTrue(any("2 次" in line for line in problems), problems)
+
+    def test_script_src_must_exist(self):
+        problems = web_lint.check_script_refs('<script src="nope.js"></script>')
+        self.assertTrue(problems)
+        problems = web_lint.check_script_refs('<script src="scan.js"></script>')
+        self.assertEqual(problems, [])
+
+    def test_real_docs_pass(self):
+        """真实 docs/ 必须过——否则这道门禁第一次跑就是红的。"""
+        self.assertEqual(web_lint.main([]), 0)
+
+
 class TestGate(unittest.TestCase):
     """统一门禁入口：本地和 CI 必须跑同一套。
 
@@ -1019,7 +1454,7 @@ class TestGate(unittest.TestCase):
         self.assertTrue(core <= everything)
         # 全量 = 核心 + 这几个慢的。写死是有意的：新增或删掉一道门禁，
         # 这里必须跟着改一次，避免"顺手删了一道"没人发现。
-        self.assertEqual(core | {"docs", "cli", "web", "package"}, everything)
+        self.assertEqual(core | {"docs", "cli", "web", "weblint", "package"}, everything)
 
     def test_select_only(self):
         picked = gate.select(only="data,corpus")

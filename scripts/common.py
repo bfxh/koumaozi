@@ -162,11 +162,22 @@ _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
 
+def _blank_same_shape(match):
+    """把匹配片段换成等长空白，**但保留换行符**。
+
+    只按长度补空格会把整块代码压成一行：字符数一样，行号全乱。
+    README 里有十几块目录树和命令示例，实测原文 317 行、清洗后只剩 198 行，
+    报出来的行号与原文差 111 行——用户照着行号跳转，正好落在别的段落。
+    等长 ≠ 保行。
+    """
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
 def strip_code(text):
     """去掉代码块、行内代码、HTML 注释。文档里的示例代码不是观点表达。"""
-    text = _FENCE_RE.sub(lambda m: " " * len(m.group(0)), text)
-    text = _HTML_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), text)
-    text = _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), text)
+    text = _FENCE_RE.sub(_blank_same_shape, text)
+    text = _HTML_COMMENT_RE.sub(_blank_same_shape, text)
+    text = _INLINE_CODE_RE.sub(_blank_same_shape, text)
     return text
 
 
@@ -269,6 +280,47 @@ def _rhetorical_frame(text, start, end):
     return bool(REVERSAL_RE.search(_cut_at_break(text[end:end + 12])))
 
 
+# 数据条目的编号。出现在同一行里，基本可以断定这行在"给标签归位"，不是在骂人。
+ID_RE = re.compile(r"(?:HAT-F[1-8]-\d{2}|PAT-\d{2}|CMB-\d{2}|CRP-\d{2,3})")
+
+# markdown 的"陈列槽位"。标题是在给标签起名，表格是在给标签归类——两者都是
+# 字典的格子，不是发言。列表项和引用块不一样：评论区里粘原话最常用的就是
+# 引用块，有人真会一条条列出帽子清单，这两类降级会造成漏检，所以不碰。
+SLOT_HEADING = "heading"
+SLOT_TABLE = "table"
+SLOT_LIST = "list"
+SLOT_QUOTE = "quote"
+
+_LIST_MARK_RE = re.compile(r"^(?:[-*+]|\d+[.)])\s")
+
+
+def markdown_slot(text, absolute):
+    """命中处所在行属于哪种 markdown 结构。非 markdown 结构返回 ""。
+
+    只往回找到行首，不往前跨行——跨行会把上一行的 `#` 也算进来。
+    """
+    line_start = text.rfind("\n", 0, absolute) + 1
+    line_end = text.find("\n", absolute)
+    if line_end < 0:
+        line_end = len(text)
+    line = text[line_start:line_end].lstrip()
+    if line.startswith("#"):
+        return SLOT_HEADING
+    if line.startswith("|"):
+        return SLOT_TABLE
+    if line.startswith(">"):
+        return SLOT_QUOTE
+    if _LIST_MARK_RE.match(line):
+        return SLOT_LIST
+    return ""
+
+
+def line_text(text, absolute):
+    line_start = text.rfind("\n", 0, absolute) + 1
+    line_end = text.find("\n", absolute)
+    return text[line_start:line_end if line_end >= 0 else len(text)]
+
+
 def context_role(text, start, end, window=8):
     """判断命中处是"在用帽子"还是"在提帽子"。
 
@@ -302,6 +354,32 @@ def context_role(text, start, end, window=8):
         if text.count(mark, 0, start) % 2 == 1:
             return "quoted"
     return "used"
+
+
+def doc_mode_role(role, text, absolute):
+    """`--doc-mode`：把 markdown 陈列槽位里的 used 降级成 quoted。
+
+    返回 (role, slot)。slot 供报告里统计降级来源，不做静默处理。
+
+    为什么需要这个：拿本工具扫一篇**讲扣帽子现象**的文章，标题是
+    `### HAT-F1-01 公知`、表格里排着 `公知、殖人、小粉红`，评分直接 100。
+    文章在讲解手法，一个字都没在骂人，但工具说它"论证让位于身份定性"——
+    这是最容易被判定为"不能用"的误报。
+
+    降级范围刻意收窄：
+    - 标题、表格行：字典的格子，是给标签起名和归类
+    - 列表项：只有行内出现 HAT-/PAT-/CMB-/CRP- 编号才算条目
+    - 引用块：**不降级**。粘原话最常用的就是引用块（casebook 里全是攻击样本），
+      降级等于让工具对着满篇骂人的文档报 0 分，错在另一个方向。
+    """
+    slot = markdown_slot(text, absolute)
+    if role != "used" or not slot:
+        return role, slot
+    if slot in (SLOT_HEADING, SLOT_TABLE):
+        return "quoted", slot
+    if slot == SLOT_LIST and ID_RE.search(line_text(text, absolute)):
+        return "quoted", slot
+    return role, slot
 
 
 def relpath(path):

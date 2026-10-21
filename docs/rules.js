@@ -9,7 +9,7 @@
   else { root.KOUMAOZI_RULES = factory(); }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   return {
-   "version": "1.10.1",
+   "version": "1.11.0",
    "families": {
     "stance-traitor": {
      "label": "立场叛徒",

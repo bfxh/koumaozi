@@ -1,7 +1,7 @@
 ---
 name: "koumaozi"
 description: "扣帽子工程：识别、拆解、反制与生成中文语境下的标签化攻击。当文本出现人身定性、动机揣测、上纲上线、群体污名、道德审判等表达，或用户要求'看看这段话哪里在扣帽子''帮我拆一下这个回复''生成带帽子的短评''这篇评论是不是在带节奏''这段连招怎么拆''我改完之后好点了吗'时调用。内置 55 个帽子词条、24 式攻击句式、10 条固定连招、8 大帽子家族、102 条带覆盖门禁的回归语料（含 21 条引用/否认语境样本，并标注每条模拟的野外写法特征），附带可执行的扫描器/生成器/改稿对比工具（Python 标准库零依赖）。输出前必须叠加 anti-ai-flavor 去掉 AI 腔。"
-version: "1.10.1"
+version: "1.11.0"
 ---
 
 # 扣帽子工程 (Koumaozi)
@@ -310,11 +310,12 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 
 ## 脚本参考
 
-全部 Python 3.8+ 标准库，零第三方依赖，UTF-8 输出，Windows 控制台自动适配。
+全部 Python 3.9+ 标准库，零第三方依赖，UTF-8 输出，Windows 控制台自动适配。
+（声明 3.9 而不是 3.8：CI 矩阵最小只跑到 3.9，没被跑过的版本号等于空话。）
 
 | 脚本 | 作用 | 关键参数 |
 |---|---|---|
-| `scripts/hat_scan.py` | 扫描文本中的帽子、句式与连招 | `--text/--file/--target`、`--json`、`--min-severity`、`--top`、`--combo-window` |
+| `scripts/hat_scan.py` | 扫描文本中的帽子、句式与连招 | `--text/--file/--target`、`--json`、`--report`、`--doc-mode`、`--keep-code`、`--min-severity`、`--top`、`--combo-window` |
 | `scripts/hat_generate.py` | 按家族/帽子/句式/连招拼装文案 | `--target`、`--hat`、`--family`、`--pattern`、`--combo`、`--intensity`、`--platform`、`--seed`、`--slot` |
 | `scripts/hat_diff.py` | 改稿前后对比：分数升降、消除了什么、新增了什么 | `--before`、`--after`、`--must-drop`、`--max-score`、`--json` |
 | `scripts/corpus_check.py` | 回归语料门禁：正样本该抓必抓、负样本一个不许抓 | `--json`、`--verbose` |
@@ -324,6 +325,10 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 | `scripts/package.py` | 打包 skill 包并自检（解压后验证，不验源目录）；`--check-dir` 核对已装目录 | `--verify`、`--check-dir`、`--out`、`--keep` |
 | `scripts/build_web.py` | 从 `data/` 生成网页端规则文件 `docs/rules.js`（派生物，勿手改） | `--check`、`--out` |
 | `scripts/web_parity.py` | 网页端与 Python 端逐条对拍（字数/分数/命中数/每条命中的类型、编号、片段、严重度、角色） | `--json`、`--verbose` |
+| `scripts/release_check.py` | 发版一致性：tag 与 VERSION 必须对上；发布后回收的包与本地验过的包逐字节比对 | `--tag`、`--local`、`--remote`、`--sum` |
+| `scripts/install_smoke.py` | 装完之后能不能用：布局齐不齐、扫不扫得出东西、门禁是不是按预期跳过 | `--installed`、`--json` |
+| `scripts/mutation_check.py` | 把已经修好的 bug 逐一改回去，看门禁会不会红 | `--only`、`--list`、`--verbose` |
+| `scripts/web_lint.py` | 网页端静态检查：JS 语法、script 引用、`app.js` 找的 DOM id 在不在 | — |
 | `scripts/release_notes.py` | 从 CHANGELOG 抽发版说明 | `--version`、`--out`、`--section-only` |
 | `scripts/install.sh` / `install.ps1` | 安装到 skill 目录（含开发态软链/Junction）；`--check` 只查不装 | `--version`、`--from`、`--from-dir`、`--target`、`--check` |
 
@@ -339,6 +344,43 @@ python3 scripts/hat_generate.py --target "某观点" --slot 比例=九成 --slot
 
 `--seed` 保证可复现：同一个种子，同一条输出。做教学对比、写测试用例都靠它。
 
+### 两种输入场合，两种口径
+
+**标签分只统计 `used`。** 被引用、被否认的命中另计到 `quoted_hits` / `denied_hits`，
+不参与打分。这条不是锦上添花：一篇《我没有收钱，也不是公知》的澄清文，如果被引用和
+被否认的命中一起算进密度，会和真攻击文拿同样的分——工具对着自辩的人说"你在扣帽子"，
+一次就够让人卸载。
+
+**扫评论区原话**（默认）：不加任何参数，`--text` 粘进去就行。
+
+```
+python3 scripts/hat_scan.py --text "这种公知体，收钱的吧？"
+```
+
+**扫讲解性文章**（`--doc-mode`）：标题和表格里的帽子是**条目**，不是发言。
+一篇讲解扣帽子手法的文章，标题写着 `### 公知`、表格里排着 `公知、殖人、小粉红`，
+默认模式下会被判满分"论证让位于身份定性"，而全文一个字都没在骂人。
+
+```
+python3 scripts/hat_scan.py --target references/ --doc-mode --report
+```
+
+降级范围刻意收窄，降过头是另一种不可用：
+
+| 位置 | 处理 | 为什么 |
+|---|---|---|
+| 标题行 `### X` | 降 `quoted` | 在给标签起名 |
+| 表格行 `\| ... \|` | 降 `quoted` | 在给标签归类 |
+| 列表项 | 只有带 `HAT-/PAT-/CMB-/CRP-` 编号才降 | `- 这种双标的东西` 是真在骂 |
+| 引用块 `> ...` | **不降** | 粘原话最常用的就是引用块；降了等于对着满篇骂人的文档报 0 分 |
+
+`--report` 出 markdown：结论、证据、反制放同一张表，能直接贴进 issue。
+`--json` 是给程序消费的，`--report` 是给人看的。
+
+```
+python3 scripts/hat_scan.py --file examples/draft.md --report --top 10
+```
+
 改稿对比的典型用法：
 
 ```bash
@@ -351,7 +393,7 @@ python3 scripts/hat_diff.py --before examples/a.md --after examples/b.md --must-
 
 ## 质量门禁
 
-九道门禁定义在 `scripts/gate.py` 一处，本地和 CI 跑同一套：
+十一道门禁定义在 `scripts/gate.py` 一处，本地和 CI 跑同一套：
 
 ```bash
 python3 scripts/gate.py --list      # 有哪些门禁
@@ -365,10 +407,12 @@ python3 scripts/gate.py --tier core # 只跑核心（约 6s）
 | `data` | schema、家族覆盖、别名冲突、模板槽位、文档引用的编号真实存在、版本号三处一致（VERSION / SKILL.md / CHANGELOG） |
 | `words` | 文档被大段删改后规模缩水（门槛一万字） |
 | `corpus` | 102 条回归语料：64 正该抓必抓、17 负一个不许抓、21 语境（引用/否认）必须降到零；外加覆盖门禁（每式/每连招必被覆盖，每家族 ≥3 条语料且 ≥2 顶帽子，denied/quoted 各 ≥2 条语料，11 种野外写法每种至少一条） |
-| `unit` | 扫描器正反例、连招检测、生成器可复现**且产出能被自己的扫描器认出指定帽子（生成→识别闭环）**、diff 方向，外加性能门禁（长文/超长单句/高命中密度必须线性时间，防正则回溯爆炸）；`install --check` 在两平台上的版本比较与完整性核对 |
+| `unit` | 扫描器正反例、连招检测、生成器可复现**且产出能被自己的扫描器认出指定帽子（生成→识别闭环）**、diff 方向、**标签分只算 used**、`--doc-mode` 的降级边界（标题/表格降、引用块不降）、发版一致性、安装布局，外加性能门禁（长文/超长单句/高命中密度必须线性时间，防正则回溯爆炸） |
+| `mutation` | **门禁本身有没有在防东西**。把已经修好的 bug 逐一改回去（10 条），不红的就是装饰品。测试会静默腐烂：断言写错对象、`assertIn` 写成永远成立的形式，照样一片绿 |
 | `docs` | 文档命令示例照抄能不能跑、`--json` 真是 JSON、引用的样例文件真存在 |
 | `cli` | 四个命令的端到端形状：扫描有命中、连招三段、改稿门禁能拦恶化 |
 | `web` | 网页端（`docs/`）的规则文件是否还与 `data/` 同步、浏览器端判定与 `hat_scan.py` 是否逐条一致——两边不一致不会报错，只会让网页给出错的结论 |
+| `weblint` | `app.js` 找的每个 DOM id 在 `index.html` 里存不存在、`<script src>` 引用的文件是否真实存在、有没有重复 id。`getElementById` 拿不到元素只返回 `null`，页面还在、看着像没数据，其实是坏了 |
 | `package` | 发出去的包齐不齐、能不能跑（解压后验证，不验源目录） |
 
 **收进一个入口的理由**：门禁散在 workflow 里，本地要自己记顺序，CI 和本地各写一份，改一边忘另一边就是"本地绿、CI 红"。现在 `ci.yml` / `release.yml` 只决定哪个 Python 版本跑哪一层，集合不再重复列举；有测试专门盯着这一点。

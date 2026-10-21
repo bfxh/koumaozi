@@ -13,6 +13,7 @@
     samples: document.getElementById("samples"),
     text: document.getElementById("text"),
     counter: document.getElementById("counter"),
+    docmode: document.getElementById("docmode"),
     clear: document.getElementById("clear"),
     score: document.getElementById("score"),
     bar: document.getElementById("bar"),
@@ -216,6 +217,10 @@
       ["每千字帽子", stats.hat_per_kilo],
       ["字数", stats.chars]
     ];
+    // 这几个是"看见了但不算进去"的命中。不列出来，用户会看到下面
+    // 六七十条明细、上面写"帽子 2"，以为计数坏了。
+    if (stats.quoted_hits) { pairs.splice(4, 0, ["被引用", stats.quoted_hits]); }
+    if (stats.denied_hits) { pairs.splice(4, 0, ["被否认", stats.denied_hits]); }
     pairs.forEach(function (pair) {
       var li = document.createElement("li");
       li.textContent = pair[0] + " " + pair[1];
@@ -223,19 +228,36 @@
     });
   }
 
-  /** 主分数只算"正在使用"的命中，被引用 / 被否认的不算。
+  /** 对照分：把降级的命中硬当回 used，算一遍"不降级会是多少分"。
    *
-   *  这个口径和回归语料一致：把"他在评论区说我收了钱"判成 51 分中度标签化，
-   *  等于告诉用户"你这段在扣帽子"，而事实是他在转述别人的指控。
-   *  含这些的总分仍然照命令行那边的算法给出，放在下面一行对照，两边都不藏。
+   *  主分数只算 used 是 scan.js 里的既有规则；这里额外给一个反事实分数，
+   *  让人能看见降级到底吃掉了多少。不给这个数，用户会觉得是被悄悄压分。
    */
-  function renderDowngrade(downgraded, totalStats, chars) {
+  function naiveScore(findings, chars) {
+    var promoted = [];
+    for (var i = 0; i < findings.length; i++) {
+      var item = findings[i];
+      if (item.role === "used") {
+        promoted.push(item);
+      } else {
+        var copy = {};
+        for (var key in item) {
+          if (Object.prototype.hasOwnProperty.call(item, key)) { copy[key] = item[key]; }
+        }
+        copy.role = "used";
+        promoted.push(copy);
+      }
+    }
+    return SCAN.score(promoted, chars);
+  }
+
+  function renderDowngrade(downgraded, naiveStats, chars) {
     if (!downgraded.length) {
       els.downgrade.textContent = "";
       return;
     }
     els.downgrade.innerHTML = "另有 <b>" + downgraded.length + "</b> 处被引用 / 被否认（已降级，不计入）" +
-      " · 含这些一共 <b>" + totalStats.label_score + "</b> 分（" + chars + " 字）";
+      " · 若硬算进去是 <b>" + naiveStats.label_score + "</b> 分（" + chars + " 字）";
   }
 
   /* ---- 主流程 ---- */
@@ -251,23 +273,20 @@
       setScore({ label_score: 0, verdict: "还没有输入。" }, false);
       renderDowngrade([], null, 0);
       renderCounts({ hat_hits: 0, pattern_hits: 0, combo_hits: 0, critical_hits: 0,
-                     hat_per_kilo: 0, chars: 0 });
+                     quoted_hits: 0, denied_hits: 0, hat_per_kilo: 0, chars: 0 });
       renderMarkup("", []);
       renderFindings([]);
       return;
     }
 
-    var result = SCAN.scan(text);
-    // 主分数只算"正在使用"的命中；被引用/被否认的单独列出来，并给出含它们的总分
-    var usedOnly = result.findings.filter(function (item) { return item.role === "used"; });
+    var result = SCAN.scan(text, { docMode: els.docmode.checked });
     var downgraded = result.findings.filter(function (item) {
       return item.kind !== "combo" && item.role !== "used";
     });
-    var usedStats = SCAN.score(usedOnly, result.chars);
 
-    setScore(usedStats, true);
+    setScore(result.stats, true);
     renderCounts(result.stats);
-    renderDowngrade(downgraded, result.stats, result.chars);
+    renderDowngrade(downgraded, naiveScore(result.findings, result.chars), result.chars);
     renderMarkup(text, result.findings);
     renderFindings(result.findings);
   }
@@ -285,6 +304,8 @@
 
   renderSamples();
   els.text.addEventListener("input", schedule);
+  // 勾上就是"这篇在讲标签，不是在用标签"：标题和表格里的标签降为被引用
+  els.docmode.addEventListener("change", run);
   els.clear.addEventListener("click", function () {
     els.text.value = "";
     run();

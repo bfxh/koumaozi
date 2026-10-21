@@ -20,7 +20,7 @@ process.stdin.on("end", () => {
     process.exit(2);
   }
   const out = cases.map((item) => {
-    const result = scan.scan(item.text);
+    const result = scan.scan(item.text, { docMode: item.docMode === true });
     return {
       id: item.id,
       chars: result.chars,

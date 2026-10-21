@@ -215,15 +215,53 @@
       sentence: sentence,
       amplifiers: amplifiers,
       role: role,
+      struct: "",
+      demoted: false,
       mechanism: mechanism,
       remedy: remedy
     };
   }
 
+  var ID_RE = /(?:HAT-F[1-8]-\d{2}|PAT-\d{2}|CMB-\d{2}|CRP-\d{2,3})/;
+  var LIST_MARK_RE = /^(?:[-*+]|\d+[.)])\s/;
+
+  function markdownSlot(text, absolute) {
+    var lineStart = absolute === 0 ? 0 : text.lastIndexOf("\n", absolute - 1) + 1;
+    var lineEnd = text.indexOf("\n", absolute);
+    if (lineEnd < 0) { lineEnd = text.length; }
+    var line = text.slice(lineStart, lineEnd).replace(/^\s+/, "");
+    if (line.charAt(0) === "#") { return "heading"; }
+    if (line.charAt(0) === "|") { return "table"; }
+    if (line.charAt(0) === ">") { return "quote"; }
+    if (LIST_MARK_RE.test(line)) { return "list"; }
+    return "";
+  }
+
+  function docModeRole(role, text, absolute) {
+    // 与 common.doc_mode_role 同构：标题和表格是"给标签起名/归类"的格子，
+    // 列表项要带 HAT-/PAT-/CMB-/CRP- 编号才算条目，引用块一律不动。
+    var slot = markdownSlot(text, absolute);
+    if (role !== "used" || !slot) { return { role: role, slot: slot }; }
+    if (slot === "heading" || slot === "table") { return { role: "quoted", slot: slot }; }
+    if (slot === "list") {
+      var lineStart = absolute === 0 ? 0 : text.lastIndexOf("\n", absolute - 1) + 1;
+      var lineEnd = text.indexOf("\n", absolute);
+      var line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd);
+      if (ID_RE.test(line)) { return { role: "quoted", slot: slot }; }
+    }
+    return { role: role, slot: slot };
+  }
+
   function detectCombos(findings, combos, window) {
+    // 只收 role === "used"。连招要求每一环都是作者自己打的；讲解文章里
+    // 挨着引用的三段句式能拼成一个 Critical 连招，那是被引用的话，不构成封堵。
     var usable = [];
     for (var i = 0; i < findings.length; i++) {
-      if (findings[i].kind === "pattern" || findings[i].kind === "hat") { usable.push(findings[i]); }
+      var item = findings[i];
+      if ((item.kind === "pattern" || item.kind === "hat") &&
+          (item.role || "used") === "used") {
+        usable.push(item);
+      }
     }
     if (!usable.length) { return []; }
 
@@ -331,11 +369,22 @@
   function scan(text, options) {
     options = options || {};
     var stripCodeBlocks = options.stripCode !== false;
+    var docMode = options.docMode === true;
     var window = options.window || W.combo;
     var body = stripCodeBlocks ? stripCode(text) : text;
     var chars = Array.from(body.replace(/\s/g, "")).length;
     var findings = [];
     var sentences = splitSentences(body);
+
+    function settle(role, absolute) {
+      if (!docMode) { return { role: role, slot: "", demoted: false }; }
+      var settled = docModeRole(role, body, absolute);
+      return {
+        role: settled.role,
+        slot: settled.slot,
+        demoted: settled.role !== role
+      };
+    }
 
     for (var s = 0; s < sentences.length; s++) {
       var sentence = sentences[s];
@@ -356,10 +405,13 @@
         if (position < 0) { continue; }
         var absolute = sentence.start + position;
         var amplifiers = nearbyAmplifier(body, absolute, absolute + token.length);
-        var role = contextRole(body, absolute, absolute + token.length);
-        findings.push(makeFinding("hat", hat.id, hat.name, token, hat.family,
-          severityFor(hat.intensity, amplifiers, role), body, absolute, line,
-          amplifiers, role, hat.mechanism, (hat.counter || [""])[0]));
+        var settled = settle(contextRole(body, absolute, absolute + token.length), absolute);
+        var finding = makeFinding("hat", hat.id, hat.name, token, hat.family,
+          severityFor(hat.intensity, amplifiers, settled.role), body, absolute, line,
+          amplifiers, settled.role, hat.mechanism, (hat.counter || [""])[0]);
+        finding.struct = settled.slot;
+        finding.demoted = settled.demoted;
+        findings.push(finding);
       }
 
       for (var p = 0; p < RULES.patterns.length; p++) {
@@ -370,10 +422,13 @@
           if (!match) { continue; }
           var offset = sentence.start + match.index;
           var amps = nearbyAmplifier(body, offset, offset + match[0].length);
-          var patternRole = contextRole(body, offset, offset + match[0].length);
-          findings.push(makeFinding("pattern", pattern.id, pattern.name, match[0],
-            pattern.family_hint || "", severityFor(2, amps, patternRole), body, offset,
-            line, amps, patternRole, pattern.essence, (pattern.counter || [""])[0]));
+          var patternSettled = settle(contextRole(body, offset, offset + match[0].length), offset);
+          var item = makeFinding("pattern", pattern.id, pattern.name, match[0],
+            pattern.family_hint || "", severityFor(2, amps, patternSettled.role), body, offset,
+            line, amps, patternSettled.role, pattern.essence, (pattern.counter || [""])[0]);
+          item.struct = patternSettled.slot;
+          item.demoted = patternSettled.demoted;
+          findings.push(item);
           break;
         }
       }
@@ -394,11 +449,18 @@
   }
 
   function score(findings, chars) {
+    // 只统计 role === "used"。被引用的、被否认的命中不参与打分——
+    // 否则一篇《我没有收钱，也不是公知》的澄清文和真攻击文拿同样的分。
+    // 这部分命中另计到 quoted_hits / denied_hits，报告里照常展示。
     var realKilo = Math.max(chars, 1) / 1000;
     var scoringKilo = Math.max(chars, 1000) / 1000;
-    var hats = 0, patterns = 0, combos = 0, criticals = 0;
+    var hats = 0, patterns = 0, combos = 0, criticals = 0, quoted = 0, denied = 0;
     for (var i = 0; i < findings.length; i++) {
       var item = findings[i];
+      var used = (item.role || "used") === "used";
+      if (item.role === "quoted") { quoted += 1; }
+      if (item.role === "denied") { denied += 1; }
+      if (!used) { continue; }
       if (item.kind === "hat") { hats += 1; }
       if (item.kind === "pattern") { patterns += 1; }
       if (item.kind === "combo") { combos += 1; }
@@ -412,6 +474,8 @@
       pattern_hits: patterns,
       combo_hits: combos,
       critical_hits: criticals,
+      quoted_hits: quoted,
+      denied_hits: denied,
       hat_per_kilo: Math.round((hats / realKilo) * 100) / 100,
       pattern_per_kilo: Math.round((patterns / realKilo) * 100) / 100,
       label_score: Math.min(100, pyRound(raw)),
@@ -433,6 +497,8 @@
     stripCode: stripCode,
     splitSentences: splitSentences,
     contextRole: contextRole,
+    markdownSlot: markdownSlot,
+    docModeRole: docModeRole,
     severityFor: severityFor,
     detectCombos: detectCombos,
     rules: function () { return RULES; }

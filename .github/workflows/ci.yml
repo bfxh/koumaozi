@@ -25,6 +25,9 @@ jobs:
   gates:
     name: ${{ matrix.os }} · py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    # 卡住的作业会白占 6 小时到默认超时。这套门禁正常 30 秒，给 15 分钟余量
+    # 已经够宽松了；超了这个数一定是死循环或等待输入，不是在算。
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -60,3 +63,62 @@ jobs:
       - name: 摘要
         if: matrix.tier == 'full' && matrix.os == 'ubuntu-24.04'
         run: cat gate.md >> "$GITHUB_STEP_SUMMARY"
+
+  # 门禁验的是源码目录，用户拿到的是装完之后的目录。两者之间还有一层：
+  # 解压、放位置、写清单、PATH/编码适配。1.6.0 的"装完一跑门禁就红"就是漏在这里。
+  #
+  # 三个组合都要跑：install.sh 是 bash 一套，install.ps1 在 PS 5.1 和 pwsh 7 下
+  # 行为并不完全一致（`$LASTEXITCODE`、原生参数拼接、中文码页都踩过），
+  # 而用户机器上多半还是 5.1。
+  install:
+    name: 安装端到端 · ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04,   label: "bash",   shell: bash }
+          - { os: windows-latest, label: "PS 5.1", shell: powershell }
+          - { os: windows-latest, label: "pwsh 7", shell: pwsh }
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # 打包是 gate 的 package 门禁的一部分（打完立刻解压自检），
+      # 这里只调入口，不在 yml 里再写一遍打包规则
+      - name: 打包
+        run: python scripts/gate.py --only package
+
+      # 装到 $HOME 下的模拟位置，不碰 runner 的真实 skills 目录
+      - name: 安装（bash）
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          mkdir -p "$HOME"
+          bash scripts/install.sh --from "dist/koumaozi-$(cat VERSION).zip" -y
+
+      # install.ps1 走到最后会 exit，所以验证必须放在下一个 step
+      - name: 安装（PowerShell）
+        if: matrix.shell != 'bash'
+        shell: ${{ matrix.shell }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $zip = (Resolve-Path "dist/koumaozi-$version.zip").Path
+          $target = Join-Path $env:RUNNER_TEMP "skills\koumaozi"
+          & ".\scripts\install.ps1" -From $zip -Target $target -Yes
+
+      - name: 装完之后真的能用
+        shell: bash
+        run: |
+          if [ "${{ matrix.shell }}" = "bash" ]; then
+            installed="$RUNNER_TEMP/fakehome/.workbuddy/skills/koumaozi"
+          else
+            installed="$RUNNER_TEMP/skills/koumaozi"
+          fi
+          python scripts/install_smoke.py --installed "$installed"

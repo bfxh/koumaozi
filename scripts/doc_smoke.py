@@ -11,7 +11,9 @@
 3. 带 `--json` 的命令额外断言 stdout 是合法 JSON
 4. 引用了不存在文件的命令会被单独点出来（比"命令失败"更能定位）
 
-跳过方式：命令所在行或代码块前一行写 `doc-smoke: skip <理由>`。
+跳过方式：在命令那一行的**行尾注释**里写 `doc-smoke: skip <理由>`。
+写成单独一行不生效——抽取只认以 `python3 scripts/` 开头的行，整行注释
+在进入判断前就被跳过了（这个文档字符串原来写的是"上一行"，是错的）。
 
 用法:
     python3 scripts/doc_smoke.py
@@ -70,7 +72,10 @@ def extract(path):
     """返回 [{'source': 'README.md:12', 'command': '...'}]。跳过标记写在命令上一行。"""
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
-    rel = os.path.relpath(path, common.REPO_ROOT).replace("\\", "/")
+    # 用 common.relpath 而不是 os.path.relpath：Windows 上跨盘（C: 的文件、
+    # D: 的仓库）会抛 ValueError: path is on mount 'C:', start on mount 'D:'。
+    # 那是测试夹具的常见形态，不该让整道门禁报错。
+    rel = common.relpath(path)
     found = []
     for block in FENCE_RE.finditer(text):
         line_offset = text.count("\n", 0, block.start(1))

@@ -91,6 +91,19 @@ GATES = [
         "hint": "失败信息里有断言原文；性能和正则改动最容易连锁失败",
     },
     {
+        "key": "mutation",
+        "name": "变异验证",
+        "tier": "core",
+        "argv": py("mutation_check.py"),
+        # 变异要跑 tests/ 里的具体用例，安装包不带 tests 就地跳过
+        "needs": [_TEST_DIR],
+        "protects": "门禁本身有没有在防东西。测试会静默腐烂：断言写错了对象、"
+                    "assertIn 写成永远成立的形式，照样一片绿。把已修好的 bug 逐一"
+                    "改回去，不红的就是装饰品",
+        "hint": "报「漏网」= 该红没红，先补测试再谈功能；报「锚点失效」= 源码改动"
+                "让 scripts/mutation_check.py 里的 pattern 对不上了，同步改锚点",
+    },
+    {
         "key": "docs",
         "name": "文档命令",
         "tier": "full",
@@ -119,6 +132,18 @@ GATES = [
                     "只是网页给出的结论不可信",
         "hint": "改过 data/ 或 common.py 就先跑 build_web.py 重新生成；"
                 "对拍报某个 CRP-xx 的「命中明细」不同，去 diff docs/scan.js 与 hat_scan.py",
+    },
+    {
+        "key": "weblint",
+        "name": "网页静态检查",
+        "tier": "full",
+        "argv": py("web_lint.py"),
+        "needs": [os.path.join(ROOT, "docs")],
+        "protects": "app.js 是唯一没有行为测试的地方：getElementById 拿不到元素只返回 "
+                    "null，页面还在、看着像没数据，其实是坏了。查 JS 语法、"
+                    "script 引用是否真实存在、app.js 找的每个 id 在 HTML 里有没有",
+        "hint": "报「找不到这个 id」= 改了 index.html 的 id 或删了元素；"
+                "报「重复」= 复制粘贴留下的重复 id，getElementById 只拿第一个",
     },
     {
         "key": "package",
@@ -185,7 +210,8 @@ def summarize(stdout):
         if line.startswith("Ran "):
             return line.split(" in ")[0]
     for line in lines:
-        if line.startswith(("检查项", "语料 ", "文档命令", "CLI 冒烟", "自检 ", "中文合计", "网页端对拍")):
+        if line.startswith(("检查项", "语料 ", "文档命令", "CLI 冒烟", "自检 ", "中文合计",
+                            "网页端", "变异验证")):
             return line
     for line in reversed(lines):
         if line in ("通过", "OK") or line.startswith("失败"):

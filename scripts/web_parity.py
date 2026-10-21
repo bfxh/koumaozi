@@ -47,6 +47,13 @@ EXTRA_CASES = [
     ("XTRA-emoji", "😀 这种公知体，散了吧。"),
     ("XTRA-empty", ""),
     ("XTRA-spaces", "    \n\n   "),
+    # doc-mode 的四种槽位。默认模式下四条全部命中；勾上 doc-mode 之后
+    # 标题和表格要降，引用块和普通列表项不能降。浏览器端是这套规则的
+    # 第二份实现，不给它专门的对拍用例，`webdoc` 那条变异就抓不到。
+    ("XTRA-doc-heading", "### HAT-F1-01 公知\n\n这段正文在讲这个词的来历，没在骂人。"),
+    ("XTRA-doc-table", "| 家族 | 帽子 |\n|---|---|\n| 立场叛徒 | 公知、殖人、小粉红 |\n"),
+    ("XTRA-doc-list", "- CMB-03 的纸环是双标（要列差异）\n- 你这种双标的东西就是欠骂\n"),
+    ("XTRA-doc-quote", "> 说这话的，标准公知体，不用看了。\n"),
 ]
 
 
@@ -59,17 +66,28 @@ def node_path():
 
 
 def collect_cases():
-    cases = []
+    """每条用例跑两遍：默认模式与 `--doc-mode`。
+
+    doc-mode 在浏览器端是第二份实现（`scan.js` 的 `markdownSlot` / `docModeRole`），
+    只对拍默认模式等于把它放过。纯文本用例两边结果本来就一样，但 md 文件
+    （标题、表格）正好能把降级路径也逐条比一遍——多跑一倍用例，成本几毫秒。
+    """
+    base = []
     for case in common.load_corpus()["cases"]:
-        cases.append({"id": case["id"], "text": case["text"]})
+        base.append({"id": case["id"], "text": case["text"]})
     example_dir = os.path.join(common.REPO_ROOT, "examples")
     if os.path.isdir(example_dir):
         for name in sorted(os.listdir(example_dir)):
             path = os.path.join(example_dir, name)
             if os.path.isfile(path) and name.endswith(".md"):
                 with open(path, "r", encoding="utf-8") as fh:
-                    cases.append({"id": "examples/" + name, "text": fh.read()})
-    cases.extend({"id": case_id, "text": text} for case_id, text in EXTRA_CASES)
+                    base.append({"id": "examples/" + name, "text": fh.read()})
+    base.extend({"id": case_id, "text": text} for case_id, text in EXTRA_CASES)
+
+    cases = []
+    for case in base:
+        cases.append(dict(case, docMode=False))
+        cases.append({"id": case["id"] + "@doc", "text": case["text"], "docMode": True})
     return cases
 
 
@@ -77,7 +95,8 @@ def python_side(cases):
     compiled = hat_scan.compile_patterns()
     results = []
     for case in cases:
-        findings, chars = hat_scan.scan_text("<parity>", case["text"], compiled)
+        findings, chars = hat_scan.scan_text("<parity>", case["text"], compiled,
+                                             doc_mode=case.get("docMode", False))
         stats = hat_scan.score(findings, chars)
         results.append({
             "id": case["id"],
@@ -94,7 +113,8 @@ def python_side(cases):
 
 
 def js_side(cases, node):
-    payload = json.dumps([{"id": case["id"], "text": case["text"]} for case in cases],
+    payload = json.dumps([{"id": case["id"], "text": case["text"],
+                           "docMode": case.get("docMode", False)} for case in cases],
                          ensure_ascii=False)
     proc = subprocess.run([node, RUNNER], input=payload, capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
