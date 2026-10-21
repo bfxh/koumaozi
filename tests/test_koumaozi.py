@@ -88,6 +88,32 @@ class TestData(unittest.TestCase):
             self.assertGreaterEqual(len(hat["counter"]), 2, hat["id"])
             self.assertGreaterEqual(len(hat["signal"]), 2, hat["id"])
 
+    def test_every_pattern_example_is_detected_by_its_own_rule(self):
+        """文档里写的示例，必须能被这一式自己的规则抓出来。
+
+        原来有 3 条对不上：示例说"按你这逻辑，那…"，正则要求这两个词紧挨着，
+        中间不许有逗号；示例说"专家早就定性了"，正则只认"定了"。用户照着示例
+        学这一式的写法，换个场景写出来工具却说不算——文档成了误导。
+        """
+        compiled = hat_scan.compile_patterns()
+        bad = []
+        for pattern in common.load_patterns()["patterns"]:
+            findings, _ = hat_scan.scan_text("<example>", pattern["example"], compiled)
+            if pattern["id"] not in {item["pattern_id"] for item in findings}:
+                bad.append((pattern["id"], pattern["example"]))
+        self.assertEqual(bad, [], f"{len(bad)} 条示例自己的规则抓不到: {bad[:5]}")
+
+    def test_every_hit_carries_a_remedy(self):
+        """"只会扣不会拆"是这套工具的反面教材，所以命中必须带反制话术。"""
+        compiled = hat_scan.compile_patterns()
+        missing = []
+        for hat in common.flatten_hats():
+            findings, _ = hat_scan.scan_text("<t>", f"典型的{hat['name']}。", compiled)
+            hits = [item for item in findings if item["pattern_id"] == hat["id"]]
+            if not hits or not str(hits[0].get("remedy") or "").strip():
+                missing.append(hat["id"])
+        self.assertEqual(missing, [], f"这些帽子命中后没有反制话术: {missing}")
+
     def test_combo_count(self):
         self.assertEqual(len(common.load_combos()["combos"]), 10)
 

@@ -1795,6 +1795,24 @@
       "traits": [
         "denial"
       ]
+    },
+    {
+      "id": "CRP-102",
+      "kind": "neutral",
+      "family": "",
+      "text": "要是其他人遇到这情况，大概也会这么处理。",
+      "expect": {
+        "must_include": [],
+        "min_hits": 0,
+        "max_hits": 0,
+        "score_band": [
+          0,
+          0
+        ]
+      },
+      "traits": [
+        "colloquial"
+      ]
     }
   ]
 }
