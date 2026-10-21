@@ -20,6 +20,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -192,6 +193,17 @@ def summarize(stdout):
     return lines[-1] if lines else ""
 
 
+def skip_note(text):
+    """unittest 的跳过数不在 "Ran N tests" 那行，在结尾的 "OK (skipped=3)"。
+
+    只看 "Ran 126 tests" 是看不出有多少条**根本没跑**的。跨平台矩阵上这尤其
+    要命：Windows 那条要是因为没装 pwsh 全跳过，日志照样一片绿，而矩阵的
+    全部意义就是验 Windows 独有的东西。
+    """
+    found = re.search(r"skipped=(\d+)", text or "")
+    return int(found.group(1)) if found else 0
+
+
 def run_gate(gate, keep_going=True):
     started = time.perf_counter()
     env = dict(os.environ)
@@ -207,6 +219,11 @@ def run_gate(gate, keep_going=True):
         alt = summarize(proc.stderr or "")
         if alt and (not detail or alt.startswith("Ran ")):
             detail = alt
+    # 跳过数单列出来："Ran 126 tests" 一行看不出有几条根本没跑
+    if detail.startswith("Ran "):
+        skipped = skip_note(proc.stderr or "") or skip_note(proc.stdout or "")
+        if skipped:
+            detail = f"{detail}  |  跳过 {skipped}"
     problems = []
     if not passed:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()

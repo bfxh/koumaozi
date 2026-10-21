@@ -865,6 +865,36 @@ class TestGate(unittest.TestCase):
         text = "自检 koumaozi-1.0.0.zip  10 个文件\nRan 81 tests in 5.2s\nOK"
         self.assertEqual(gate.summarize(text), "Ran 81 tests")
 
+    def test_skip_count_is_surfaced(self):
+        """跳过数必须进到门禁那一行。
+
+        "Ran 126 tests" 看不出有几条根本没跑。跨平台矩阵上这是致命的：
+        Windows 那条要是因为缺 pwsh 全跳过，日志照样一片绿，而矩阵的全部
+        意义就是验 Windows 独有的东西。
+        """
+        self.assertEqual(gate.skip_note("Ran 126 tests in 8.5s\n\nOK (skipped=4)"), 4)
+        self.assertEqual(gate.skip_note("Ran 126 tests in 8.5s\n\nOK"), 0)
+        self.assertEqual(gate.skip_note(""), 0)
+
+    def test_skips_appear_in_the_gate_detail(self):
+        """端到端：真的走一遍 run_gate，确认那一行写出来了，而不只是算得对。"""
+        fake = {"key": "fake", "name": "假单测", "tier": "core",
+                "argv": [sys.executable, "-c",
+                         "import sys; sys.stderr.write('Ran 3 tests in 0.1s\\n\\n"
+                         "OK (skipped=2)\\n')"],
+                "protects": "", "hint": ""}
+        row = gate.run_gate(fake)
+        self.assertIn("Ran 3 tests", row["detail"])
+        self.assertIn("跳过 2", row["detail"])
+
+    def test_no_skip_suffix_when_nothing_skipped(self):
+        fake = {"key": "fake", "name": "假单测", "tier": "core",
+                "argv": [sys.executable, "-c",
+                         "import sys; sys.stderr.write('Ran 3 tests in 0.1s\\n\\nOK\\n')"],
+                "protects": "", "hint": ""}
+        row = gate.run_gate(fake)
+        self.assertNotIn("跳过", row["detail"])
+
     def test_workflows_go_through_single_entry(self):
         """ci.yml 和 release.yml 都必须走 gate.py。
 
@@ -1349,6 +1379,30 @@ class TestInstallCheckPowerShell(InstallCheckMixin, unittest.TestCase):
                                "-TotallyUnknownFlag }"],
                               capture_output=True, timeout=180)
         self.assertNotEqual(proc.returncode, 0, "未知参数应当报错退出")
+
+
+class TestMatrixIsNotVacuous(unittest.TestCase):
+    """CI 上跑的那条矩阵，必须真的验到了本平台独有的东西。
+
+    这套测试大量按平台分叉：Windows 走 PowerShell，别处走 bash。验不了就
+    skip 是对的——本地没装 pwsh 不该红，"不适用"不等于"失败"。但"因为缺工具
+    而 skip"和"验过了"在日志里长得一模一样（都是 OK），矩阵就可能悄悄退化成
+    一条什么都不验的绿灯。所以反过来在 CI 上要求：本平台的工具必须在位。
+
+    这条守卫本身只在 CI 生效，本地永远 skip。
+    """
+
+    def test_platform_shell_is_available_on_ci(self):
+        if not os.environ.get("CI"):
+            self.skipTest("只在 CI 上要求；本地缺 pwsh 是正常的")
+        if os.name == "nt":
+            self.assertIsNotNone(
+                shutil.which("pwsh"),
+                "Windows 矩阵没有 pwsh，install.ps1 这半边等于没验")
+        else:
+            self.assertIsNotNone(
+                shutil.which("bash"),
+                "Linux/macOS 矩阵没有 bash，install.sh 这半边等于没验")
 
 
 if __name__ == "__main__":
