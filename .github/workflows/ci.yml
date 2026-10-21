@@ -15,16 +15,25 @@ concurrency:
   cancel-in-progress: true
 
 # 门禁的顺序、集合、每道挡什么，全部定义在 scripts/gate.py。
-# 这个文件只决定"哪个 Python 版本跑哪一层"，不再逐个列举脚本——
+# 这个文件只决定"哪个系统 / 哪个 Python 版本跑哪一层"，不再逐个列举脚本——
 # 两处各写一份就会出现"本地绿、CI 红"。
+#
+# 为什么要加 Windows：v1.7.0 那个"版本比较恒相等"的 bug 只在 PowerShell 上出现，
+# 输出串码也是 Windows 独有的。两个都是本地手跑才发现的，ubuntu 矩阵永远看不见。
+# 一个只在一个平台上跑的门禁，等于没验另一个平台。
 jobs:
   gates:
-    name: py${{ matrix.python }}
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.12", "3.13"]
+        include:
+          - { os: ubuntu-24.04,   python: "3.9",  tier: core }
+          - { os: ubuntu-24.04,   python: "3.12", tier: full }
+          - { os: ubuntu-24.04,   python: "3.13", tier: core }
+          # Windows 跑全量：install.ps1、Junction、GBK 输出、路径分隔符都在这一条上
+          - { os: windows-latest, python: "3.12", tier: full }
 
     steps:
       - uses: actions/checkout@v7
@@ -33,13 +42,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # 3.12 跑全量并顺手产摘要；另外两个版本只跑核心，省时间
-      - name: 门禁（全量，仅 3.12）
-        if: matrix.python == '3.12'
+      # 全量顺手产摘要；两个核心版本只跑 core，省时间
+      - name: 门禁（全量）
+        if: matrix.tier == 'full'
         run: python scripts/gate.py --markdown gate.md
 
       - name: 门禁（核心）
-        if: matrix.python != '3.12'
+        if: matrix.tier == 'core'
         run: python scripts/gate.py --tier core
 
       - name: 单元测试（弃用警告视为失败，仅 3.13）
@@ -49,5 +58,5 @@ jobs:
           KOUMAOZI_SKIP_DOC_SMOKE: "1"
 
       - name: 摘要
-        if: matrix.python == '3.12'
+        if: matrix.tier == 'full' && matrix.os == 'ubuntu-24.04'
         run: cat gate.md >> "$GITHUB_STEP_SUMMARY"

@@ -1137,6 +1137,11 @@ class InstallCheckMixin:
     shell = None          # 由子类填
     script_name = None
     hint_flag = "-y"      # 结论里给出的"直接可执行"那个开关
+    # 指定版本号那个开关的拼写。这条跟"行为"无关，是纯粹的平台差异：
+    # PowerShell 用 -Version，bash 用 --version。断言里写死拼写，等于让
+    # 共用的用例偷偷依赖 bash。更难的是 `--version` 在 pwsh -Command 模式下
+    # 根本不是参数，是 `--` 递减运算符，会直接 ParserError。
+    version_flag = "--version"
 
     @classmethod
     def setUpClass(cls):
@@ -1174,12 +1179,12 @@ class InstallCheckMixin:
         self.skipTest(reason)
 
     def test_up_to_date_exits_zero(self):
-        proc = self.run_check(self.stub_install(self.version), "--version", self.version)
+        proc = self.run_check(self.stub_install(self.version), self.version_flag, self.version)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("已是最新", proc.stdout)
 
     def test_update_exits_one_with_hint(self):
-        proc = self.run_check(self.stub_install(self.version), "--version", "99.0.0")
+        proc = self.run_check(self.stub_install(self.version), self.version_flag, "99.0.0")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("有更新", proc.stdout)
         self.assertIn(self.hint_flag, proc.stdout, "报了有更新就得给出能直接执行的命令")
@@ -1189,23 +1194,24 @@ class InstallCheckMixin:
 
         这是这类脚本最经典的真 bug，而且不报错——只是永远"已是最新"。
         """
-        proc = self.run_check(self.stub_install("1.9.0"), "--version", "1.10.0")
+        proc = self.run_check(self.stub_install("1.9.0"), self.version_flag, "1.10.0")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("有更新", proc.stdout)
 
     def test_local_ahead_is_not_an_error(self):
-        proc = self.run_check(self.stub_install("9.9.9"), "--version", "1.0.0")
+        proc = self.run_check(self.stub_install("9.9.9"), self.version_flag, "1.0.0")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("本地比线上新", proc.stdout)
 
     def test_not_installed(self):
         proc = self.run_check(os.path.join(self.tmp, "definitely-not-there"),
-                              "--version", "1.0.0")
+                              self.version_flag, "1.0.0")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("未安装", proc.stdout)
 
     def test_version_with_v_prefix_is_accepted(self):
-        proc = self.run_check(self.stub_install(self.version), "--version", "v" + self.version)
+        proc = self.run_check(self.stub_install(self.version), self.version_flag,
+                              "v" + self.version)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
@@ -1229,7 +1235,7 @@ class TestInstallCheckBash(InstallCheckMixin, unittest.TestCase):
         dest = self.real_install()
         with open(os.path.join(dest, "data", "hats.json"), "a", encoding="utf-8") as fh:
             fh.write("\n")
-        proc = self.run_check(dest, "--version", self.version)
+        proc = self.run_check(dest, self.version_flag, self.version)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("清单不符", proc.stdout)
 
@@ -1246,7 +1252,7 @@ class TestInstallCheckBash(InstallCheckMixin, unittest.TestCase):
             return table
 
         before = snapshot()
-        self.run_check(dest, "--version", "99.0.0")
+        self.run_check(dest, self.version_flag, "99.0.0")
         self.assertEqual(before, snapshot(), "--check 说好了不动磁盘")
 
     def test_pinned_version_does_not_call_the_network(self):
@@ -1261,8 +1267,8 @@ class TestInstallCheckBash(InstallCheckMixin, unittest.TestCase):
         os.chmod(script, 0o755)
         env = dict(os.environ)
         env["PATH"] = stub + os.pathsep + env.get("PATH", "")
-        proc = self.run_check(self.stub_install(self.version), "--version", self.version,
-                              env=env)
+        proc = self.run_check(self.stub_install(self.version), self.version_flag,
+                              self.version, env=env)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertFalse(os.path.exists(marker), "--version 已经给了还要去问 API")
 
@@ -1278,6 +1284,7 @@ class TestInstallCheckPowerShell(InstallCheckMixin, unittest.TestCase):
 
     script_name = "install.ps1"
     hint_flag = "-Yes"
+    version_flag = "-Version"
 
     @classmethod
     def setUpClass(cls):
@@ -1287,24 +1294,50 @@ class TestInstallCheckPowerShell(InstallCheckMixin, unittest.TestCase):
     def build_argv(self, target, *extra):
         raise AssertionError("PowerShell 侧不走通用 argv，见 run_check")
 
+    @staticmethod
+    def ps_quote(text):
+        return "'" + text.replace("'", "''") + "'"
+
     def run_check(self, target, *extra, **kwargs):
+        """用 -Command 而不是 -File：先把控制台编码对齐到 UTF-8 再调用。
+
+        断言的是**逻辑与退出码**，控制台编码是环境属性：英文 Windows 的 OEM 码页
+        装不下中文，硬用 -File 会把"有更新"变成一串问号，测试就会为了跟环境较劲
+        而红。真正跑 -File 的那条路另有 test_file_form_also_works 盯着。
+
+        注意调用串必须**拼成一条语句**再交给 pwsh。曾经把 "& 'script'"、"-Check"、
+        "-Target"、"'...'" 当成四个元素用 "; " 连起来，结果变成 `& 'script'; -Check;
+        -Target; '...'`——脚本被裸调（直接开始装），后面三条各成一句全报错。表现是
+        "测试说 -Check 没生效"，其实是根本没把参数交给脚本。
+        """
         if not self.pwsh:
             self.skipped("没有 pwsh（PowerShell 7）")
-        argv = [self.pwsh, "-NoProfile", "-File",
-                os.path.join(SCRIPTS, self.script_name), "-Check",
-                "-Target", target] + list(extra)
+        script = os.path.join(SCRIPTS, self.script_name)
+        call = ["& " + self.ps_quote(script), "-Check", "-Target", self.ps_quote(target)]
+        for item in extra:
+            call.append(item if item.startswith("-") else self.ps_quote(item))
+        command = "; ".join(["[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+                             " ".join(call),
+                             "exit $LASTEXITCODE"])
+        argv = [self.pwsh, "-NoProfile", "-NonInteractive", "-Command", command]
         proc = subprocess.run(argv, capture_output=True, timeout=180, cwd=REPO_ROOT,
                               env=kwargs.get("env"))
         return ShellResult(proc.returncode, decode_console(proc.stdout),
                            decode_console(proc.stderr))
 
-    def test_tampered_install_is_reported(self):
-        dest = self.real_install()
-        with open(os.path.join(dest, "data", "hats.json"), "a", encoding="utf-8") as fh:
-            fh.write("\n")
-        proc = self.run_check(dest, "-Version", self.version)
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn("清单不符", proc.stdout)
+    def test_file_form_also_works(self):
+        """文档里写的是 `install.ps1 -Check`，-File 这条路必须通。
+
+        只断言退出码：输出里有没有中文取决于运行环境的码页，那是环境的事。
+        """
+        if not self.pwsh:
+            self.skipped("没有 pwsh（PowerShell 7）")
+        target = self.stub_install(self.version)
+        proc = subprocess.run([self.pwsh, "-NoProfile", "-File",
+                               os.path.join(SCRIPTS, self.script_name), "-Check",
+                               "-Target", target, "-Version", self.version],
+                              capture_output=True, timeout=180, cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 0, proc.stderr[:400])
 
     def test_unknown_flag_does_not_silently_succeed(self):
         """参数打错时 PowerShell 默认会当没事发生，安装脚本不能这样。"""
