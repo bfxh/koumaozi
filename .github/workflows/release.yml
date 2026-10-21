@@ -24,9 +24,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04,   label: "bash",   shell: bash }
-          - { os: windows-latest, label: "PS 5.1", shell: powershell }
-          - { os: windows-latest, label: "pwsh 7", shell: pwsh }
+          - { os: ubuntu-24.04,   label: "bash",   host: bash }
+          - { os: windows-latest, label: "PS 5.1", host: powershell }
+          - { os: windows-latest, label: "pwsh 7", host: pwsh }
 
     steps:
       - uses: actions/checkout@v7
@@ -41,17 +41,29 @@ jobs:
         run: python scripts/gate.py --only package
 
       - name: 安装（bash）
-        if: matrix.shell == 'bash'
+        if: matrix.host == 'bash'
         shell: bash
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
           mkdir -p "$HOME"
           bash scripts/install.sh --from "dist/koumaozi-$(cat VERSION).zip" -y
 
-      # install.ps1 结尾会 exit，验证必须放到下一个 step
-      - name: 安装（PowerShell）
-        if: matrix.shell != 'bash'
-        shell: ${{ matrix.shell }}
+      # install.ps1 走到最后会 exit，验证必须放到下一个 step。
+      # 两个宿主分开写、各自硬编码 shell，不把 matrix 变量塞进 shell 字段：
+      # 那个字段是解析期决定的，不支持表达式，写了整份 workflow 会被判成
+      # 语法错误——现象是整个 run 变成 "workflow file issue"，连 job 都列不出来。
+      - name: 安装（Windows 5.1）
+        if: matrix.host == 'powershell'
+        shell: powershell
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $zip = (Resolve-Path "dist/koumaozi-$version.zip").Path
+          $target = Join-Path $env:RUNNER_TEMP "skills\koumaozi"
+          & ".\scripts\install.ps1" -From $zip -Target $target -Yes
+
+      - name: 安装（Windows 7）
+        if: matrix.host == 'pwsh'
+        shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
           $zip = (Resolve-Path "dist/koumaozi-$version.zip").Path
@@ -61,7 +73,7 @@ jobs:
       - name: 装完之后真的能用
         shell: bash
         run: |
-          if [ "${{ matrix.shell }}" = "bash" ]; then
+          if [ "${{ matrix.host }}" = "bash" ]; then
             installed="$RUNNER_TEMP/fakehome/.workbuddy/skills/koumaozi"
           else
             installed="$RUNNER_TEMP/skills/koumaozi"
